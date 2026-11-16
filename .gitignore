@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+.next/
+node_modules/
+next-env.d.ts
+*.tsbuildinfo
+.venv/
+__pycache__/
+data/
+supabase/.temp/
