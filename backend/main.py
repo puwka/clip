@@ -15,12 +15,13 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .advertising import AdPlacement, Campaign, banner_path, campaign_state
 from .advertising_api import router as advertising_router
-from .config import BANNER_DIR, CLIP_DIR, EDIT_DIR, EXTENSIONS, FFMPEG, FFPROBE, FRONTEND_ORIGIN, IMPORT_DIR, MAX_BYTES, OLLAMA_MODEL, SOURCE_DIR, WHISPER_MODEL
+from .config import BANNER_DIR, CLIP_DIR, EDIT_DIR, EXTENSIONS, FFMPEG, FFPROBE, FRONTEND_ORIGIN, IMPORT_DIR, MAX_BYTES, OLLAMA_MODEL, SOURCE_DIR, TWITCH_DIR, WHISPER_MODEL
 from .db import Database
 from .editor_api import router as editor_router
 from .highlights import MAX_CLIPS, MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, ollama_available, whisper_installed
 from .import_api import router as import_router
 from .media import MediaError, probe
+from .twitch_api import router as twitch_router, run_twitch_handoffs
 from .worker import run_worker
 
 SOURCE_FIELDS = (
@@ -42,7 +43,11 @@ async def lifespan(app):
     EDIT_DIR.mkdir(exist_ok=True, parents=True)
     BANNER_DIR.mkdir(exist_ok=True, parents=True)
     IMPORT_DIR.mkdir(exist_ok=True, parents=True)
+    TWITCH_DIR.mkdir(exist_ok=True, parents=True)
     app.state.db = Database()
+    app.state.recording = None
+    app.state.recording_task = None
+    app.state.twitch_error = None
     stop = asyncio.Event()
     workers = []
     if app.state.db.configured and shutil.which(FFMPEG) and shutil.which(FFPROBE):
@@ -51,11 +56,15 @@ async def lifespan(app):
             asyncio.create_task(run_worker(app.state.db, stop, ("import",))),
         ]
     app.state.workers = workers
+    handoffs = asyncio.create_task(run_twitch_handoffs(app.state, stop))
     try:
         yield
     finally:
         stop.set()
-        await asyncio.gather(*workers)
+        if app.state.recording_task and not app.state.recording_task.done():
+            app.state.recording.stop_capture()
+            await app.state.recording_task
+        await asyncio.gather(*workers, handoffs)
         await app.state.db.client.aclose()
 
 
@@ -63,6 +72,7 @@ app = FastAPI(title="Clip Factory", lifespan=lifespan)
 app.include_router(editor_router)
 app.include_router(advertising_router)
 app.include_router(import_router)
+app.include_router(twitch_router)
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 app.add_middleware(
     CORSMiddleware, allow_origins=[FRONTEND_ORIGIN],
@@ -87,6 +97,7 @@ class Settings(Model):
     clip_seconds: int = Field(ge=MIN_CLIP_SECONDS, le=MAX_CLIP_SECONDS)
     clip_count: int = Field(default=MAX_CLIPS, ge=1, le=MAX_CLIPS)
     aspect: Literal["landscape", "portrait"]
+    twitch_segment_minutes: Literal[15, 60] | None = None
 
 
 class Assignment(Model):
@@ -379,8 +390,10 @@ async def get_settings(request: Request):
 async def update_settings(request: Request, data: Settings):
     rows = await request.app.state.db.request(
         "PATCH", "cf_settings", params={"id": "eq.1"},
-        body={**data.model_dump(), "clip_count": MAX_CLIPS, "aspect": "portrait"},
+        body={**data.model_dump(exclude_none=True), "clip_count": MAX_CLIPS, "aspect": "portrait"},
     )
     if not rows:
         raise HTTPException(503, "Выполните supabase/schema.sql в проекте Supabase.")
+    if request.app.state.recording and data.twitch_segment_minutes is not None:
+        request.app.state.recording.minutes = data.twitch_segment_minutes
     return rows[0]

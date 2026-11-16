@@ -34,18 +34,17 @@ async def list_edits(request: Request, offset: Annotated[int, Query(ge=0)] = 0, 
 
 @router.post("", status_code=201)
 async def create_edit(request: Request, payload: EditRequest):
-    return (await queue_edits(request, payload, batch=False))[0]
+    return (await queue_edits(request.app.state.db, payload, batch=False))[0]
 
 
 @router.post("/batches", status_code=201)
 async def create_batch(request: Request, payload: EditRequest):
     if len(payload.clip_ids) < 2:
         raise HTTPException(422, "Выберите минимум два фрагмента для пакета.")
-    return {"id": str(payload.id), "items": await queue_edits(request, payload, batch=True)}
+    return {"id": str(payload.id), "items": await queue_edits(request.app.state.db, payload, batch=True)}
 
 
-async def queue_edits(request, payload, *, batch):
-    db = request.app.state.db
+async def queue_edits(db, payload, *, batch):
     edit_id = str(payload.id)
     ids = [str(clip_id) for clip_id in payload.clip_ids]
     options = payload.options.model_dump()

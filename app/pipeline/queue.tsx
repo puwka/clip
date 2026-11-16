@@ -7,6 +7,7 @@ import { API, date, request, sourceLabels, useResource, type ImportJob, type Pag
 import { ImportButton } from "../import-link";
 import { Empty, ErrorNotice, Loading, PageTitle } from "../ui";
 import { UploadButton, useWorkspace } from "../workspace";
+import { TwitchRecording } from "./twitch";
 
 type EditJob = QueueJob & { options: { title: string }; segments: { title: string }[]; batch_id: string | null };
 
@@ -67,6 +68,7 @@ export function Pipeline() {
   return <>
     <PageTitle title="Конвейер" description="От загрузки и ИИ-анализа до монтажа, рекламы и скачивания." action={
       <div className="queue-actions"><ImportButton/><UploadButton/></div>}/>
+    <TwitchRecording/>
     <div className="queue-toolbar"><div className="segmented" aria-label="Фильтр очереди">
       <button type="button" aria-pressed={!pending} onClick={() => setPending(false)}>Все задачи</button>
       <button type="button" aria-pressed={pending} onClick={() => setPending(true)}>В работе</button>

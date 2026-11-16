@@ -225,9 +225,10 @@ def shortlist(candidates, duration):
 def contact_sheet(path, candidate, check):
     # Three frames at roughly two-second intervals around the measured peak.
     start = max(candidate.start, min(candidate.peak - 3, candidate.end - 6))
+    padding = "tpad=stop_mode=clone:stop_duration=6," if candidate.end - start < 6 else ""
     return read_media(path, start, 6, [
         "-map", "0:V:0", "-an", "-vf",
-        "fps=1/2,scale=256:144:force_original_aspect_ratio=decrease,"
+        f"{padding}fps=1/2,scale=256:144:force_original_aspect_ratio=decrease,"
         "pad=256:144:(ow-iw)/2:(oh-ih)/2,setsar=1,tile=3x1",
         "-frames:v", "1", "-c:v", "mjpeg", "-threads:v", "1", "-q:v", "4", "-f", "image2pipe",
     ], check=check)
@@ -299,7 +300,7 @@ def rate(client, path, candidate, check):
                 raise MediaError(f"Ошибка оценки в Ollama ({OLLAMA_MODEL}). Проверьте модель и журнал Ollama.") from exc
 
 
-def select_highlights(scored):
+def select_highlights(scored, minimum=MIN_CLIP_SECONDS):
     selected = []
     order = sorted(scored, key=lambda pair: (-pair[1].score, -pair[0].strength, pair[0].start))
     for candidate, rating in order:
@@ -312,7 +313,7 @@ def select_highlights(scored):
                 start = max(start, chosen.end)
             else:
                 end = min(end, chosen.start)
-        if end - start < MIN_CLIP_SECONDS - 1e-6:
+        if end - start < minimum - 1e-6:
             continue
         selected.append((replace(candidate, start=start, end=end), rating))
         if len(selected) == MAX_CLIPS:
@@ -322,7 +323,8 @@ def select_highlights(scored):
 
 def analyze_highlights(path, source, progress, check):
     duration = source["duration"]
-    if duration < MIN_CLIP_SECONDS:
+    minimum = 1 if source.get("twitch_capture") else MIN_CLIP_SECONDS
+    if duration < minimum:
         raise MediaError("Для анализа нужна запись длительностью не менее 15 секунд.")
     clip_length = min(duration, min(MAX_CLIP_SECONDS, max(MIN_CLIP_SECONDS, source["clip_seconds"])))
     candidates = []
@@ -341,4 +343,4 @@ def analyze_highlights(path, source, progress, check):
             scored.append((candidate, rate(client, path, candidate, check)))
             progress(59 + int(26 * index / len(picked)))
 
-    return select_highlights(scored)
+    return select_highlights(scored, minimum)

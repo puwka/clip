@@ -65,9 +65,12 @@ export function UploadButton({ children = "Загрузить видео", campa
   return <button className="button primary" type="button" onClick={() => openUpload(campaign)}><Plus size={18}/> {children}</button>;
 }
 
-export function CampaignField({ value, change, initial = [] }: { value: string; change: (value: string) => void; initial?: Pick<Campaign, "id" | "name">[] }) {
+export function CampaignField({ value, change, initial = [], forExport = false }: {
+  value: string; change: (value: string) => void; initial?: Pick<Campaign, "id" | "name">[]; forExport?: boolean;
+}) {
   const { revision } = useWorkspace();
-  const { data, error } = useResource<Page<Campaign>>("/campaigns", revision);
+  const base = forExport ? "/campaigns?for_export=true" : "/campaigns";
+  const { data, error } = useResource<Page<Campaign>>(base, revision);
   const [extra, setExtra] = useState<Campaign[]>([]);
   const [offset, setOffset] = useState<number | null>();
   const [loading, setLoading] = useState(false);
@@ -79,7 +82,7 @@ export function CampaignField({ value, change, initial = [] }: { value: string; 
     setLoading(true);
     setLoadError("");
     try {
-      const page = await request<Page<Campaign>>("/campaigns?offset=" + next);
+      const page = await request<Page<Campaign>>(base + (forExport ? "&" : "?") + "offset=" + next);
       setExtra((current) => [...current, ...page.items]);
       setOffset(page.next);
     } catch (error) { setLoadError((error as Error).message); }
@@ -88,7 +91,7 @@ export function CampaignField({ value, change, initial = [] }: { value: string; 
   return <div className="campaign-field">
     <label className="field"><span>Рекламная кампания</span>
       <select value={value} onChange={(event) => change(event.target.value)}>
-        <option value="">Без кампании</option>
+        <option value="">{forExport ? "Без рекламы" : "Без кампании"}</option>
         {Array.from(items, ([id, name]) => <option key={id} value={id}>{name}</option>)}
       </select>
     </label>

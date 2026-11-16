@@ -30,7 +30,7 @@ export type AdPlacement = {
 };
 export type EditAd = { campaign: Campaign; placement: AdPlacement; expected_views: number };
 export type AdSnapshot = Pick<Campaign, "name" | "brand" | "promo_code" | "cpm" | "currency" | "expected_views" | "placement">;
-export type Settings = { clip_seconds: number; aspect: Source["aspect"] };
+export type Settings = { clip_seconds: number; aspect: Source["aspect"]; twitch_segment_minutes?: 15 | 60 };
 export type Health = {
   database: boolean; ffmpeg: boolean; worker: boolean; max_upload_bytes: number; error: string | null;
   ollama: boolean; ollama_model: string; whisper: boolean; whisper_model: string;

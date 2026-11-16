@@ -7,6 +7,8 @@ create table if not exists public.cf_settings (
   aspect text not null default 'portrait' check (aspect in ('landscape', 'portrait'))
 );
 insert into public.cf_settings (id) values (1) on conflict do nothing;
+alter table public.cf_settings add column if not exists twitch_segment_minutes integer
+  not null default 60 check (twitch_segment_minutes in (15, 60));
 alter table public.cf_settings alter column clip_count set default 10;
 alter table public.cf_settings alter column aspect set default 'portrait';
 update public.cf_settings set aspect = 'portrait' where aspect <> 'portrait';
@@ -53,6 +55,7 @@ create table if not exists public.cf_sources (
 );
 create index if not exists cf_sources_queue_idx on public.cf_sources (created_at)
   where status in ('queued', 'processing');
+alter table public.cf_sources add column if not exists twitch_capture boolean not null default false;
 create index if not exists cf_sources_campaign_idx on public.cf_sources (campaign_id);
 create index if not exists cf_sources_created_idx on public.cf_sources (created_at desc, id desc);
 

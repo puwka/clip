@@ -329,6 +329,7 @@ export function SettingsPage() {
 
 function SettingsForm({ initial }: { initial: Settings }) {
   const [seconds, setSeconds] = useState(String(initial.clip_seconds));
+  const [twitchMinutes, setTwitchMinutes] = useState(String(initial.twitch_segment_minutes ?? 60));
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -338,7 +339,10 @@ function SettingsForm({ initial }: { initial: Settings }) {
     setError("");
     setSaved(false);
     try {
-      await request("/settings", { method: "PATCH", body: JSON.stringify({ clip_seconds: Number(seconds), aspect: "portrait" }) });
+      await request("/settings", { method: "PATCH", body: JSON.stringify({
+        clip_seconds: Number(seconds), aspect: "portrait",
+        twitch_segment_minutes: initial.twitch_segment_minutes === undefined ? undefined : Number(twitchMinutes),
+      }) });
       setSaved(true);
     } catch (error) { setError((error as Error).message); }
     finally { setBusy(false); }
@@ -346,6 +350,14 @@ function SettingsForm({ initial }: { initial: Settings }) {
   return <form className="form settings-form" onSubmit={save} onChange={() => setSaved(false)}>
     <fieldset className="form" disabled={busy}>
       <label className="field"><span>Длительность клипа, сек.</span><input type="number" min={15} max={45} required value={seconds} onChange={(event) => setSeconds(event.target.value)}/></label>
+      {initial.twitch_segment_minutes !== undefined && <label className="field">
+        <span>Длительность сегмента Twitch</span>
+        <select value={twitchMinutes} onChange={(event) => setTwitchMinutes(event.target.value)}>
+          <option value="15">Быстрый · 15 минут</option>
+          <option value="60">Стандартный · 60 минут</option>
+        </select>
+        <small className="muted">При записи изменение вступит в силу со следующего сегмента.</small>
+      </label>}
       <p className="muted">Формат экспорта · 9:16, 1080 × 1920</p>
     </fieldset>
     {error && <ErrorNotice>{error}</ErrorNotice>}

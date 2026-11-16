@@ -10,6 +10,7 @@ from .advertising import banner_path, campaign_state
 from .editor import render_edit
 from .link_import import import_link_path, process_import
 from .media import MediaError, process_source
+from .twitch_capture import check_space
 
 logger = logging.getLogger(__name__)
 QUEUES = {
@@ -28,6 +29,9 @@ async def process_job(db, record, token, stop, kind):
     aborted = threading.Event()
     outputs = []
     committing = False
+    twitch_job = record.get("twitch_capture") or (
+        kind == "edit" and record.get("batch_id") == record["segments"][0]["source_id"]
+    )
 
     def set_progress(value):
         nonlocal progress
@@ -36,6 +40,8 @@ async def process_job(db, record, token, stop, kind):
     def check():
         if aborted.is_set():
             raise LeaseLost
+        if twitch_job:
+            check_space()
 
     identity = {"p_id": record["id"], "p_token": token}
     prefix, result_field = QUEUES[kind]
