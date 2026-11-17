@@ -56,9 +56,11 @@ function EditGraphic() {
 export function Dashboard() {
   const { revision, health, healthError } = useWorkspace();
   const { data, error } = useResource<Summary>("/summary", revision, 4000);
-  const connectionIssue = healthError || health?.error || (health && !health.ffmpeg ? "Для обработки требуется FFmpeg." : "")
-    || (health && !health.ollama ? health.ollama_status.detail : "")
-    || (health && !health.whisper ? "Проверьте faster-whisper." : "");
+  const connectionIssue = healthError || health?.error || (health && health.mode !== "catalog" && (
+    !health.ffmpeg ? "Для обработки требуется FFmpeg."
+      : !health.ollama ? health.ollama_status.detail
+      : !health.whisper ? "Проверьте faster-whisper." : ""
+  ));
   return <>
     <PageTitle title="Дашборд" description="Загрузка записей, очередь обработки и готовые клипы."
       action={<Link className="button secondary" href="/pipeline">Открыть конвейер <ArrowRight size={15}/></Link>}/>
@@ -305,13 +307,15 @@ export function Campaigns() {
 export function SettingsPage() {
   const { health, healthError, revision, refresh } = useWorkspace();
   const { data, error } = useResource<Settings>("/settings", revision);
+  const catalog = health?.mode === "catalog";
   return <>
-    <PageTitle title="Настройки" description="Параметры нарезки и состояние локальной системы."/>
+    <PageTitle title="Настройки" description={catalog ? "Подключения облачного каталога." : "Параметры нарезки и состояние локальной системы."}/>
     <div className="settings-grid">
       <section className="panel settings-panel">
         <h2>Новые нарезки</h2><p className="muted">До 10 лучших фрагментов на запись. Параметры применяются при загрузке.</p>
         {error && <ErrorNotice>{error}</ErrorNotice>}
-        {data ? <SettingsForm initial={data}/> : !error && <Loading/>}
+        {data ? (catalog ? <p className="muted">Длительность клипа · {data.clip_seconds} сек. Параметры меняются в локальной студии.</p>
+          : <SettingsForm initial={data}/>) : !error && <Loading/>}
       </section>
       <section className="panel settings-panel">
         <div className="flex items-center justify-between gap-3"><h2>Подключения</h2><button className="icon-button" type="button" onClick={refresh} title="Проверить подключения" aria-label="Проверить подключения"><RefreshCw size={16}/></button></div>
@@ -319,19 +323,24 @@ export function SettingsPage() {
           {[
             { name: "FastAPI", ok: !!health && !healthError, icon: Radio },
             { name: "Supabase", ok: health?.database && !healthError, icon: HardDrive },
+            ...(!catalog ? [
             { name: "FFmpeg и FFprobe", ok: health?.ffmpeg && !healthError, icon: Video },
             { name: "faster-whisper" + (health ? " · " + health.whisper_model : ""), ok: health?.whisper && !healthError, icon: Activity },
             { name: "Ollama" + (health ? " · " + health.ollama_model : ""), ok: health?.ollama && !healthError, icon: Activity },
             { name: "Обработчик очереди", ok: health?.worker && health.database && !healthError, icon: Activity },
+            ] : []),
           ].map(({ name, ok, icon: Icon }) => <li key={name}><span><Icon size={17}/>{name}</span><span className={"status-dot " + (ok ? "good" : "")} title={ok ? "Подключено" : "Недоступно"} aria-label={ok ? "Подключено" : "Недоступно"}/></li>)}
         </ul>
         {(healthError || health?.error) && <ErrorNotice>{healthError || health?.error}</ErrorNotice>}
-        {health && !health.ffmpeg && <ErrorNotice>Установите FFmpeg и FFprobe, затем перезапустите FastAPI.</ErrorNotice>}
-        {health && !health.ollama && <ErrorNotice>{health.ollama_status.detail}</ErrorNotice>}
-        {health && !health.whisper && <ErrorNotice>Установите faster-whisper из backend/requirements.txt.</ErrorNotice>}
-        {!!health && <div className="connection-limit"><span>Лимит загрузки</span><strong>{fileSize(health.max_upload_bytes)}</strong></div>}
+        {catalog && <p className="muted">Загрузка видео, FFmpeg, Whisper, Ollama и очередь обработки доступны в локальной студии.</p>}
+        {health && !catalog && <>
+          {!health.ffmpeg && <ErrorNotice>Установите FFmpeg и FFprobe, затем перезапустите FastAPI.</ErrorNotice>}
+          {!health.ollama && <ErrorNotice>{health.ollama_status.detail}</ErrorNotice>}
+          {!health.whisper && <ErrorNotice>Установите faster-whisper из backend/requirements.txt.</ErrorNotice>}
+          <div className="connection-limit"><span>Лимит загрузки</span><strong>{fileSize(health.max_upload_bytes)}</strong></div>
+        </>}
       </section>
-      <OllamaSettings health={health} refresh={refresh}/>
+      {!catalog && <OllamaSettings health={health} refresh={refresh}/>}
     </div>
   </>;
 }

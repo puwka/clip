@@ -165,8 +165,12 @@ async def health(request: Request):
         details = exc.detail
     workers = request.app.state.workers
     connection = ollama.settings()
-    ollama_status = await asyncio.to_thread(ollama.status, connection)
+    ollama_status = (
+        {"state": "local_only", "detail": "Ollama используется локальным обработчиком."}
+        if VERCEL_HOSTED else await asyncio.to_thread(ollama.status, connection)
+    )
     return {
+        "mode": "catalog" if VERCEL_HOSTED else "local",
         "database": settings is not None,
         "ffmpeg": bool(shutil.which(FFMPEG) and shutil.which(FFPROBE)),
         "worker": bool(workers) and all(not worker.done() for worker in workers),

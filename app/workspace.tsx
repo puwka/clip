@@ -29,8 +29,9 @@ export function Workspace({ children }: { children: ReactNode }) {
   const [revision, setRevision] = useState(0);
   const [upload, setUpload] = useState<{ campaign: string } | null>(null);
   const { data: health, error: healthError } = useResource<Health>("/health", revision, 6000);
-  const ready = health?.database && health.ffmpeg && health.worker && health.ollama && health.whisper && !healthError;
-  const status = ready ? "Готово к работе" : health || healthError ? "Требуется настройка" : "Проверка системы";
+  const catalog = health?.mode === "catalog";
+  const ready = health?.database && !healthError && (catalog || (health.ffmpeg && health.worker && health.ollama && health.whisper));
+  const status = ready ? (catalog ? "Каталог доступен" : "Готово к работе") : health || healthError ? "Требуется настройка" : "Проверка системы";
   const current = nav.find(({ path }) => path === pathname)?.title;
   const refresh = () => setRevision((n) => n + 1);
   const openUpload = (campaign = "") => setUpload({ campaign });
@@ -39,7 +40,7 @@ export function Workspace({ children }: { children: ReactNode }) {
       <aside className="sidebar">
         <Link className="brand" href="/" aria-label="Clip Factory — дашборд">
           <span className="brand-mark"><Scissors size={21} strokeWidth={2.4} /></span>
-          <div><strong>Clip Factory</strong><span>Локальная студия</span></div>
+          <div><strong>Clip Factory</strong><span>{catalog ? "Облачный каталог" : "Локальная студия"}</span></div>
         </Link>
         <nav className="navigation" aria-label="Основная навигация">
           {nav.map(({ path, title, shortTitle, icon: Icon }) => <Link href={path} key={path} title={title} aria-label={title} aria-current={pathname === path ? "page" : undefined}>
@@ -47,7 +48,7 @@ export function Workspace({ children }: { children: ReactNode }) {
             {shortTitle && <span className="nav-short">{shortTitle}</span>}
           </Link>)}
         </nav>
-        <div className="sidebar-footer"><HardDrive size={17} /><div>Локальное хранилище<small>Видео на этом ПК</small></div></div>
+        {!catalog && <div className="sidebar-footer"><HardDrive size={17} /><div>Локальное хранилище<small>Видео на этом ПК</small></div></div>}
       </aside>
       <div className="main-shell">
         <header className="topbar">

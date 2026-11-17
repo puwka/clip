@@ -39,6 +39,7 @@ export type OllamaMode = "local" | "network";
 export type OllamaConnection = { url: string; model: string; mode: OllamaMode };
 export type OllamaStatus = { state: string; detail: string };
 export type Health = {
+  mode?: "catalog" | "local";
   database: boolean; ffmpeg: boolean; worker: boolean; max_upload_bytes: number; error: string | null;
   ollama: boolean; ollama_model: string; whisper: boolean; whisper_model: string;
   ollama_mode: OllamaMode; ollama_status: OllamaStatus; ollama_queue: { waiting: number; active: number };
