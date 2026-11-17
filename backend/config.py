@@ -6,7 +6,8 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
-DATA = (ROOT / os.getenv("CLIP_DATA_DIR", "data")).resolve()
+VERCEL_HOSTED = os.getenv("VERCEL_ENV") in {"preview", "production"}
+DATA = (ROOT / os.getenv("CLIP_DATA_DIR", "/tmp/clip-factory" if VERCEL_HOSTED else "data")).resolve()
 SOURCE_DIR = DATA / "sources"
 CLIP_DIR = DATA / "clips"
 EDIT_DIR = DATA / "shorts"

@@ -9,24 +9,26 @@ from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .advertising import AdPlacement, Campaign, banner_path, campaign_state
 from .advertising_api import router as advertising_router
-from .config import BANNER_DIR, CLIP_DIR, EDIT_DIR, EXTENSIONS, FFMPEG, FFPROBE, FRONTEND_ORIGIN, IMPORT_DIR, MAX_BYTES, OLLAMA_MODEL, SOURCE_DIR, TWITCH_DIR, WHISPER_MODEL
+from .config import BANNER_DIR, CLIP_DIR, EDIT_DIR, EXTENSIONS, FFMPEG, FFPROBE, FRONTEND_ORIGIN, IMPORT_DIR, MAX_BYTES, SOURCE_DIR, TWITCH_DIR, VERCEL_HOSTED, WHISPER_MODEL
 from .db import Database
 from .editor_api import router as editor_router
-from .highlights import MAX_CLIPS, MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, ollama_available, whisper_installed
+from .highlights import MAX_CLIPS, MAX_CLIP_SECONDS, MIN_CLIP_SECONDS, whisper_installed
 from .import_api import router as import_router
-from .media import MediaError, probe
+from .media import MediaError, probe, read_media
 from .twitch_api import router as twitch_router, run_twitch_handoffs
 from .worker import run_worker
+from .webcam import WebcamSettings
+from . import ollama
 
 SOURCE_FIELDS = (
     "id,name,byte_size,duration,status,progress,error,created_at,updated_at,"
-    "campaign_id,cf_campaigns(name),aspect"
+    "campaign_id,cf_campaigns(name),aspect,has_webcam,webcam_region"
 )
 CLIP_FIELDS = (
     "id,source_id,title,start_seconds,end_seconds,score,category,reason,created_at,"
@@ -50,13 +52,13 @@ async def lifespan(app):
     app.state.twitch_error = None
     stop = asyncio.Event()
     workers = []
-    if app.state.db.configured and shutil.which(FFMPEG) and shutil.which(FFPROBE):
+    if not VERCEL_HOSTED and app.state.db.configured and shutil.which(FFMPEG) and shutil.which(FFPROBE):
         workers = [
             asyncio.create_task(run_worker(app.state.db, stop)),
             asyncio.create_task(run_worker(app.state.db, stop, ("import",))),
         ]
     app.state.workers = workers
-    handoffs = asyncio.create_task(run_twitch_handoffs(app.state, stop))
+    handoffs = [] if VERCEL_HOSTED else [asyncio.create_task(run_twitch_handoffs(app.state, stop))]
     try:
         yield
     finally:
@@ -64,7 +66,7 @@ async def lifespan(app):
         if app.state.recording_task and not app.state.recording_task.done():
             app.state.recording.stop_capture()
             await app.state.recording_task
-        await asyncio.gather(*workers, handoffs)
+        await asyncio.gather(*workers, *handoffs)
         await app.state.db.client.aclose()
 
 
@@ -73,7 +75,8 @@ app.include_router(editor_router)
 app.include_router(advertising_router)
 app.include_router(import_router)
 app.include_router(twitch_router)
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+if not VERCEL_HOSTED:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 app.add_middleware(
     CORSMiddleware, allow_origins=[FRONTEND_ORIGIN],
     allow_methods=["GET", "POST", "PATCH"], allow_headers=["Content-Type", "X-Clip-Factory"],
@@ -83,6 +86,11 @@ app.add_middleware(
 @app.middleware("http")
 async def local_writes(request, call_next):
     if request.method in {"POST", "PATCH"}:
+        if VERCEL_HOSTED:
+            return JSONResponse(
+                {"detail": "Обработка и сохранение доступны в локальном Clip Factory с постоянным хранилищем."},
+                status_code=503,
+            )
         origin = request.headers.get("origin")
         if (origin and origin != FRONTEND_ORIGIN) or request.headers.get("x-clip-factory") != "local":
             return JSONResponse({"detail": "Запрос записи отклонён локальным сервером."}, status_code=403)
@@ -112,12 +120,33 @@ def page(rows, offset):
 
 
 def with_clip_score(rows):
-    return [{**row, "score_percent": round(row["score"] * 100)} for row in rows]
+    return [{**row, "score_percent": round(row["score"] * 100),
+             "lossless": (CLIP_DIR / f"{row['id']}.mkv").is_file()} for row in rows]
 
 
 async def require_campaign(db, campaign_id):
     if campaign_id and not await db.get("cf_campaigns", select="id", id=f"eq.{campaign_id}", limit=1):
         raise HTTPException(404, "Кампания не найдена.")
+
+
+@app.get("/settings/ollama")
+def get_ollama():
+    connection = ollama.settings()
+    return {**connection.model_dump(), "mode": connection.mode}
+
+
+@app.patch("/settings/ollama")
+def update_ollama(connection: ollama.Connection):
+    try:
+        ollama.save(connection)
+    except OSError as exc:
+        raise HTTPException(507, "Не удалось сохранить настройки Ollama на этом ПК.") from exc
+    return {**connection.model_dump(), "mode": connection.mode}
+
+
+@app.post("/settings/ollama/check")
+def check_ollama(connection: ollama.Connection):
+    return {"mode": connection.mode, **ollama.status(connection)}
 
 
 @app.get("/health")
@@ -138,12 +167,17 @@ async def health(request: Request):
     except HTTPException as exc:
         details = exc.detail
     workers = request.app.state.workers
+    connection = ollama.settings()
+    ollama_status = await asyncio.to_thread(ollama.status, connection)
     return {
         "database": settings is not None,
         "ffmpeg": bool(shutil.which(FFMPEG) and shutil.which(FFPROBE)),
         "worker": bool(workers) and all(not worker.done() for worker in workers),
-        "ollama": await ollama_available(),
-        "ollama_model": OLLAMA_MODEL,
+        "ollama": ollama_status["state"] == "ready",
+        "ollama_model": connection.model,
+        "ollama_mode": connection.mode,
+        "ollama_status": ollama_status,
+        "ollama_queue": ollama.queue_state(),
         "whisper": whisper_installed(),
         "whisper_model": WHISPER_MODEL,
         "max_upload_bytes": MAX_BYTES,
@@ -176,13 +210,14 @@ async def sources(request: Request, offset: Offset = 0, campaign: UUID | None = 
 
 @app.post("/sources", status_code=201)
 async def upload(request: Request, filename: Annotated[str, Query(min_length=1, max_length=255)],
-                 campaign: UUID | None = None):
+                 campaign: UUID | None = None, has_webcam: bool = False):
     if not (shutil.which(FFMPEG) and shutil.which(FFPROBE)):
         raise HTTPException(503, "Установите FFmpeg и FFprobe, затем перезапустите сервер.")
     if not whisper_installed():
         raise HTTPException(503, "Установите faster-whisper из backend/requirements.txt.")
-    if not await ollama_available():
-        raise HTTPException(503, f"Запустите Ollama и установите модель: ollama pull {OLLAMA_MODEL}.")
+    ollama_status = await asyncio.to_thread(ollama.status, ollama.settings())
+    if ollama_status["state"] != "ready":
+        raise HTTPException(503, ollama_status["detail"])
     name = re.sub(r"[\x00-\x1f\x7f]", "", filename.replace("\\", "/").rsplit("/", 1)[-1]).strip()
     extension = Path(name).suffix.lower()
     if extension not in EXTENSIONS:
@@ -214,7 +249,7 @@ async def upload(request: Request, filename: Annotated[str, Query(min_length=1, 
         if duration < MIN_CLIP_SECONDS:
             raise HTTPException(422, "Для анализа нужна запись длительностью не менее 15 секунд.")
         staging.replace(target)
-        values = {"clip_seconds": settings[0]["clip_seconds"], "aspect": "portrait"}
+        values = {"clip_seconds": settings[0]["clip_seconds"], "aspect": "portrait", "has_webcam": has_webcam}
         # The queue can claim the row as soon as the INSERT commits.
         keep_file = True
         try:
@@ -241,6 +276,37 @@ async def upload(request: Request, filename: Annotated[str, Query(min_length=1, 
         await asyncio.to_thread(staging.unlink, missing_ok=True)
         if not keep_file:
             await asyncio.to_thread(target.unlink, missing_ok=True)
+
+
+@app.patch("/sources/{source_id}/webcam")
+async def update_webcam(request: Request, source_id: UUID, data: WebcamSettings):
+    rows = await request.app.state.db.request(
+        "PATCH", "cf_sources", params={"id": f"eq.{source_id}"},
+        body=data.model_dump(),
+    )
+    if not rows:
+        raise HTTPException(404, "Источник не найден.")
+    return data
+
+
+@app.get("/sources/{source_id}/webcam/frame")
+async def webcam_frame(request: Request, source_id: UUID, at: Annotated[float, Query(ge=0)] = 5):
+    rows = await request.app.state.db.get("cf_sources", select="extension,duration", id=f"eq.{source_id}", limit=1)
+    if rows and rows[0]["extension"] in EXTENSIONS:
+        path = SOURCE_DIR / f"{source_id}{rows[0]['extension']}"
+        if path.is_file():
+            try:
+                frame = await asyncio.to_thread(
+                    read_media, path, min(at, max(0, rows[0]["duration"] - 1)), 1,
+                    ["-map", "0:V:0", "-frames:v", "1", "-vf", "scale=960:-2:reset_sar=1",
+                     "-c:v", "mjpeg", "-q:v", "3", "-f", "image2pipe"], check=lambda: None,
+                )
+                if frame:
+                    return Response(frame, media_type="image/jpeg")
+            except MediaError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            raise HTTPException(422, "В этой точке записи нет доступного кадра.")
+    raise HTTPException(404, "Исходное видео отсутствует на этом компьютере.")
 
 
 @app.post("/sources/{source_id}/retry")
@@ -303,7 +369,8 @@ async def clips(request: Request, offset: Offset = 0, campaign: UUID | None = No
 @app.get("/clips/{clip_id}/{kind}")
 @app.head("/clips/{clip_id}/{kind}", include_in_schema=False)
 async def clip_file(request: Request, clip_id: UUID, kind: Literal["poster", "play", "download"]):
-    path = CLIP_DIR / f"{clip_id}{'.jpg' if kind == 'poster' else '.mp4'}"
+    master = CLIP_DIR / f"{clip_id}.mkv"
+    path = master if kind == "download" and master.is_file() else CLIP_DIR / f"{clip_id}{'.jpg' if kind == 'poster' else '.mp4'}"
     if not path.is_file():
         raise HTTPException(404, "Файл клипа отсутствует на диске.")
     if kind == "poster":
@@ -314,7 +381,8 @@ async def clip_file(request: Request, clip_id: UUID, kind: Literal["poster", "pl
     if not rows:
         raise HTTPException(404, "Клип не найден.")
     title = re.sub(r'[<>:"/\\|?*]', "_", rows[0]["title"])[:130]
-    return FileResponse(path, media_type="video/mp4", filename=f"{title}.mp4")
+    media_type = "video/x-matroska" if path.suffix == ".mkv" else "video/mp4"
+    return FileResponse(path, media_type=media_type, filename=f"{title}{path.suffix}")
 
 
 @app.get("/clips/{clip_id}")

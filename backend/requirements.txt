@@ -8,3 +8,4 @@ Pillow==12.2.0
 av>=16,<20
 filelock>=3,<5
 streamlink==8.6.3
+opencv-python-headless==4.13.0.92

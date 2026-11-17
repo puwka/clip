@@ -6,6 +6,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { request, type ImportJob } from "./lib";
 import { Dialog, ErrorNotice } from "./ui";
 import { CampaignField, useWorkspace } from "./workspace";
+import { WebcamToggle } from "./webcam";
 
 export function ImportButton({ campaign, goToQueue = false }: { campaign?: string; goToQueue?: boolean }) {
   const [open, setOpen] = useState(false);
@@ -26,6 +27,7 @@ function ImportDialog({ campaign, close, done }: { campaign?: string; close: () 
   const [name, setName] = useState("");
   const [campaignId, setCampaignId] = useState(campaign ?? "");
   const [allowed, setAllowed] = useState(false);
+  const [hasWebcam, setHasWebcam] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const attempted = useRef<{ body: string; id: string } | null>(null);
@@ -35,7 +37,7 @@ function ImportDialog({ campaign, close, done }: { campaign?: string; close: () 
     if (!allowed || busy) return;
     setBusy(true);
     setError("");
-    const values = { url, name, campaign_id: campaignId || null, allowed };
+    const values = { url, name, campaign_id: campaignId || null, allowed, has_webcam: hasWebcam };
     const key = JSON.stringify(values);
     if (attempted.current?.body !== key) attempted.current = { body: key, id: crypto.randomUUID() };
     try {
@@ -53,6 +55,7 @@ function ImportDialog({ campaign, close, done }: { campaign?: string; close: () 
         <label className="field"><span>Название записи</span><input maxLength={225} placeholder="Автоматически из ссылки" value={name}
           onChange={(event) => setName(event.target.value)}/></label>
         <CampaignField value={campaignId} change={setCampaignId}/>
+        <WebcamToggle value={hasWebcam} change={setHasWebcam}/>
         <p className="muted">Источник должен разрешать скачивание файла. Используйте прямой адрес, в том числе временную ссылку от владельца записи.</p>
         <label className="edit-toggle"><input type="checkbox" checked={allowed} required onChange={(event) => setAllowed(event.target.checked)}/>
           У меня есть разрешение на скачивание и обработку записи</label>

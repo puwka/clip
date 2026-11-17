@@ -12,8 +12,6 @@ from pydantic import BaseModel, Field
 
 from .advertising import EditAd, banner_path, campaign_state
 from .config import FFMPEG, FFPROBE, SOURCE_DIR, TWITCH_DIR
-from .editor import EditOptions, EditRequest
-from .editor_api import queue_edits
 from .highlights import MAX_CLIPS
 from .media import MediaError, probe
 from .twitch_capture import Recording, check_space
@@ -27,6 +25,7 @@ RESERVED = {"directory", "downloads", "settings", "subscriptions", "inventory", 
 class StartRecording(BaseModel):
     url: str = Field(max_length=200)
     campaign_id: UUID | None = None
+    has_webcam: bool = False
 
 
 @router.get("")
@@ -70,7 +69,8 @@ async def start(request: Request, data: StartRecording):
         lock.acquire(timeout=0)
     except Timeout as exc:
         raise HTTPException(409, "На этом компьютере уже идёт запись Twitch.") from exc
-    recording = Recording(match[1].lower(), settings["twitch_segment_minutes"], settings["clip_seconds"], ad)
+    recording = Recording(match[1].lower(), settings["twitch_segment_minutes"], settings["clip_seconds"], ad,
+                          has_webcam=data.has_webcam)
     state.recording = recording
 
     async def run():
@@ -100,7 +100,7 @@ async def handoff_segment(db, manifest):
     path = SOURCE_DIR / f"{source_id}{segment['extension']}"
     if not path.is_file():
         return
-    sources = await db.get("cf_sources", select="status", id=f"eq.{source_id}", limit=1)
+    sources = await db.get("cf_sources", select="id", id=f"eq.{source_id}", limit=1)
     ad = segment["ad"]
     if not sources:
         duration, has_audio = await asyncio.to_thread(probe, path)
@@ -111,22 +111,8 @@ async def handoff_segment(db, manifest):
             "byte_size": path.stat().st_size, "duration": duration, "has_audio": has_audio,
             "clip_seconds": segment["clip_seconds"], "clip_count": MAX_CLIPS, "aspect": "portrait",
             "campaign_id": ad["campaign_id"] if ad else None, "twitch_capture": True,
+            "has_webcam": segment.get("has_webcam", False),
         })
-        return
-    if sources[0]["status"] != "completed":
-        return
-    edits = await db.get("cf_edits", select="id", batch_id=f"eq.{source_id}", limit=1)
-    if not edits:
-        clips = await db.get("cf_clips", select="id,end_seconds,start_seconds", source_id=f"eq.{source_id}",
-                             order="score.desc,start_seconds.asc,id.asc", limit=MAX_CLIPS)
-        if clips:
-            if ad:
-                # Keep the banner visible even in a short final segment.
-                shortest = min(clip["end_seconds"] - clip["start_seconds"] for clip in clips)
-                if ad["placement"]["start"] >= shortest - 1 / 30:
-                    ad["placement"]["start"] = 0
-            await queue_edits(db, EditRequest(id=source_id, clip_ids=[clip["id"] for clip in clips],
-                                             options=EditOptions(), ad=ad), batch=True)
     manifest.unlink(missing_ok=True)
 
 

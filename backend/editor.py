@@ -11,8 +11,9 @@ from .advertising import AdPlacement, EditAd, banner_canvas
 from .config import EDIT_DIR, EXTENSIONS, SOURCE_DIR
 from .editor_audio import SAMPLE_RATE, encode_audio
 from .editor_captions import prepare_speech, write_overlays
-from .editor_layout import quality_args, scene_filter
+from .editor_layout import WEBCAM_AD_BAND, quality_args, scene_filter
 from .media import VIDEO_INPUT, MediaError, encode, probe
+from .webcam import WebcamRegion, detect_webcam, webcam_filter
 
 FPS = 30
 MAX_PARTS = 10
@@ -52,7 +53,7 @@ class EditRequest(BaseModel):
     ad: EditAd | None = None
 
 
-def prepare_part(part, options, check):
+def prepare_part(part, options, check, regions):
     source = SOURCE_DIR / (str(UUID(part["source_id"])) + part["extension"])
     if part["extension"] not in EXTENSIONS or not source.is_file():
         raise MediaError("Исходный файл одного из выбранных фрагментов отсутствует.")
@@ -61,7 +62,15 @@ def prepare_part(part, options, check):
     if options.captions and part["has_audio"]:
         source_duration, _ = probe(source)
         start, end, words = prepare_speech(source, start, end, source_duration, check, options.caption_language)
-    return {**part, "start_seconds": start, "end_seconds": end, "words": words, "path": source}
+    region = None
+    if part.get("has_webcam"):
+        if part.get("webcam_region"):
+            region = WebcamRegion.model_validate(part["webcam_region"])
+        else:
+            if source not in regions:
+                regions[source] = detect_webcam(source, start, end, check)
+            region = regions[source]
+    return {**part, "start_seconds": start, "end_seconds": end, "words": words, "path": source, "region": region}
 
 
 def render_part(part, frames, options, count, index, transition_frames, workdir, check):
@@ -72,9 +81,11 @@ def render_part(part, frames, options, count, index, transition_frames, workdir,
     hi = duration - (transition_frames / (2 * FPS) if index < count - 1 else 0.0)
     part_dir = workdir / f"part-{index}"
     part_dir.mkdir()
-    cues = write_overlays(part_dir, part["words"], start, options, options.title if index == 0 else "", lo, hi)
-    video = (f"fps={FPS},setpts=PTS-STARTPTS,{scene_filter(options)},"
-             f"tpad=stop_mode=clone:stop_duration=1,trim=end_frame={frames},format=yuv420p")
+    region = part["region"]
+    cues = write_overlays(part_dir, part["words"], start, options, options.title if index == 0 else "", lo, hi,
+                          webcam=region is not None)
+    video = webcam_filter(region, FPS, options) if region else f"fps={FPS},setpts=PTS-STARTPTS,{scene_filter(options)}"
+    video += f",tpad=stop_mode=clone:stop_duration=1,trim=end_frame={frames},format=yuv420p"
     if (part_dir / "overlays.ass").is_file():
         video += ",ass=filename=overlays.ass:fontsdir=fonts"
     inputs = ["-ss", f"{start:.6f}", "-t", f"{duration:.6f}", *VIDEO_INPUT, "-i", str(source)]
@@ -87,14 +98,16 @@ def render_part(part, frames, options, count, index, transition_frames, workdir,
     af = f"aresample={SAMPLE_RATE}:async=1:first_pts=0,apad,atrim=end_sample={samples},asetpts=N/SR/TB"
     target = part_dir / "scene.mkv"
     check()
-    encode([*inputs, "-map", "0:V:0", "-map", audio, "-vf", video, "-af", af,
+    filters = (["-filter_complex_threads", "2", "-filter_complex", video + "[scene]", "-map", "[scene]"]
+               if region else ["-map", "0:V:0", "-vf", video])
+    encode([*inputs, *filters, "-map", audio, "-af", af,
             "-c:v", "ffv1", "-level", "3", "-slices", "4", "-threads:v", "4",
             "-c:a", "pcm_s16le", "-ac", "2", "-ar", str(SAMPLE_RATE),
             "-t", f"{duration:.6f}", str(target)], timeout=1200, cwd=part_dir)
     return target, cues
 
 
-def assemble(paths, frame_counts, transition_frames, options, destination, workdir, ad=None):
+def assemble(paths, frame_counts, transition_frames, options, destination, workdir, ad=None, *, webcam=False):
     count = len(paths)
     inputs = [arg for path in paths for arg in ("-threads", "1", "-i", str(path))]
     graph = []
@@ -124,7 +137,8 @@ def assemble(paths, frame_counts, transition_frames, options, destination, workd
         if end <= placement.start:
             raise MediaError("Интервал показа рекламы находится за пределами ролика.")
         overlay = workdir / "campaign.png"
-        banner_canvas(ad["banner_id"], ad["promo_code"], placement).save(overlay)
+        band = {"band": WEBCAM_AD_BAND} if webcam else {}
+        banner_canvas(ad["banner_id"], ad["promo_code"], placement, **band).save(overlay)
         inputs += ["-framerate", str(FPS), "-i", str(overlay)]
         graph += [
             f"[{count}:v]format=yuva420p[ad]",
@@ -154,7 +168,8 @@ def plan_edit(parts, options):
 def render_edit(job, token, progress, check):
     options = EditOptions.model_validate(job["options"])
     requested = job["segments"]
-    parts = [prepare_part(part, options, check) for part in requested]
+    regions = {}
+    parts = [prepare_part(part, options, check, regions) for part in requested]
     frame_counts, transition_frames = plan_edit(parts, options)
     output = EDIT_DIR / f"{token}.mp4"
     ad = job.get("ad")
@@ -174,13 +189,15 @@ def render_edit(job, token, progress, check):
                 "requested_start": requested[i]["start_seconds"], "requested_end": requested[i]["end_seconds"],
                 "source_start": round(part["start_seconds"], 3), "source_end": round(part["start_seconds"] + frames / FPS, 3),
                 "output_start": round(offset / FPS, 3), "cues": cues,
+                "webcam_region": part["region"].model_dump() if part["region"] else None,
             })
             offset += frames - transition_frames
         check()
         progress(84)
         # MOV keeps the exact video time base during the final stream-copy.
         master = workdir / "master.mov"
-        duration = assemble(paths, frame_counts, transition_frames, options, master, workdir, ad)
+        duration = assemble(paths, frame_counts, transition_frames, options, master, workdir, ad,
+                            webcam=any(part["region"] for part in parts))
         progress(94)
         measurements = encode_audio(master, output, duration, check)
         check()

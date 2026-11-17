@@ -2,18 +2,21 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000").replace(/\/$/, "");
+export const API = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 export const sourceLabels = { queued: "В очереди", processing: "В обработке", completed: "Готово", failed: "Ошибка" };
 export const campaignLabels = { draft: "Черновик", active: "Активна", paused: "На паузе", finished: "Завершена" };
 export const clipCategories = { funny: "Смешной момент", shout: "Крик", crash: "Авария", surprise: "Неожиданность", other: "Другой момент" };
 
+export type WebcamRegion = { x: number; y: number; width: number; height: number };
 export type Source = {
+  has_webcam: boolean; webcam_region: WebcamRegion | null;
   id: string; name: string; status: keyof typeof sourceLabels; progress: number;
   byte_size: number; duration: number; created_at: string; error: string | null;
   campaign_id: string | null; cf_campaigns: { name: string } | null;
   aspect: "landscape" | "portrait";
 };
 export type Clip = {
+  lossless?: boolean;
   id: string; title: string; start_seconds: number; end_seconds: number; score_percent: number; created_at: string;
   category?: keyof typeof clipCategories | null; reason?: string | null;
   source_id: string; cf_sources: { name: string; aspect: Source["aspect"]; cf_campaigns: { name: string } | null };
@@ -31,9 +34,13 @@ export type AdPlacement = {
 export type EditAd = { campaign: Campaign; placement: AdPlacement; expected_views: number };
 export type AdSnapshot = Pick<Campaign, "name" | "brand" | "promo_code" | "cpm" | "currency" | "expected_views" | "placement">;
 export type Settings = { clip_seconds: number; aspect: Source["aspect"]; twitch_segment_minutes?: 15 | 60 };
+export type OllamaMode = "local" | "network";
+export type OllamaConnection = { url: string; model: string; mode: OllamaMode };
+export type OllamaStatus = { state: string; detail: string };
 export type Health = {
   database: boolean; ffmpeg: boolean; worker: boolean; max_upload_bytes: number; error: string | null;
   ollama: boolean; ollama_model: string; whisper: boolean; whisper_model: string;
+  ollama_mode: OllamaMode; ollama_status: OllamaStatus; ollama_queue: { waiting: number; active: number };
 };
 export type Page<T> = { items: T[]; next: number | null };
 export type QueueJob = { id: string; status: keyof typeof sourceLabels; progress: number; error: string | null; created_at: string };
@@ -63,9 +70,9 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   return data as T;
 }
 
-export function uploadVideo(file: File, campaign: string, onProgress: (n: number) => void, signal: AbortSignal) {
+export function uploadVideo(file: File, campaign: string, hasWebcam: boolean, onProgress: (n: number) => void, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
-    const query = new URLSearchParams({ filename: file.name });
+    const query = new URLSearchParams({ filename: file.name, has_webcam: String(hasWebcam) });
     if (campaign) query.set("campaign", campaign);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", API + "/sources?" + query);

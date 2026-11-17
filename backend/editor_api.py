@@ -74,7 +74,7 @@ async def queue_edits(db, payload, *, batch):
     if payload.options.captions and not whisper_installed():
         raise HTTPException(503, "Для субтитров установите faster-whisper.")
     rows = await db.get(
-        "cf_clips", select="id,title,source_id,start_seconds,end_seconds,cf_sources!inner(extension,has_audio)",
+        "cf_clips", select="id,title,source_id,start_seconds,end_seconds,cf_sources!inner(extension,has_audio,has_webcam,webcam_region)",
         id="in.(" + ",".join(ids) + ")",
     )
     indexed = {row["id"]: row for row in rows}

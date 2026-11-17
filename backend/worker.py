@@ -106,7 +106,7 @@ async def process_job(db, record, token, stop, kind):
                 if kind == "import":
                     remove_output(import_link_path(record["id"]))
                 for clip in previous_clips:
-                    for extension in (".mp4", ".jpg"):
+                    for extension in (".mkv", ".mp4", ".jpg"):
                         remove_output(CLIP_DIR / (clip["id"] + extension))
     finally:
         pulse.cancel()

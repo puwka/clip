@@ -52,6 +52,7 @@ class Segment:
             "extension": self.extension,
             "clip_seconds": recording.clip_seconds,
             "ad": recording.ad,
+            "has_webcam": recording.has_webcam,
         })
         self.output = av.open(str(self.partial), mode="w",
                               format="mpegts" if transport_stream else "matroska",
@@ -127,12 +128,13 @@ def capture_packets(source, recording):
 
 
 class Recording:
-    def __init__(self, channel, minutes, clip_seconds, ad):
+    def __init__(self, channel, minutes, clip_seconds, ad, *, has_webcam=False):
         self.id = str(uuid4())
         self.channel = channel
         self.minutes = minutes
         self.clip_seconds = clip_seconds
         self.ad = ad
+        self.has_webcam = has_webcam
         self.status = "connecting"
         self.active_minutes = None
         self.segment = 0

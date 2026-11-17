@@ -20,6 +20,7 @@ class ImportRequest(BaseModel):
     name: str = Field(default="", max_length=225)
     allowed: StrictBool
     campaign_id: UUID | None = None
+    has_webcam: bool = False
 
 
 @router.get("")
@@ -66,7 +67,7 @@ async def create_import(request: Request, data: ImportRequest):
     if campaign and not await db.get("cf_campaigns", select="id", id=f"eq.{campaign}", limit=1):
         raise HTTPException(404, "Кампания не найдена.")
     options = {"clip_seconds": settings[0]["clip_seconds"], "aspect": "portrait"}
-    options.update(clip_count=10, campaign_id=campaign)
+    options.update(clip_count=10, campaign_id=campaign, has_webcam=data.has_webcam)
 
     try:
         try:

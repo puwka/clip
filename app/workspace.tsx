@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Activity, Clapperboard, FolderOpen, LayoutGrid, ListTodo, Megaphone, Settings2, Upload, Plus, Scissors, Video, HardDrive, LoaderCircle, WandSparkles } from "lucide-react";
 import { createContext, useContext, useRef, useState, type ReactNode } from "react";
 import { type Campaign, type Health, type Page, fileSize, request, uploadVideo, useResource } from "./lib";
+import { WebcamToggle } from "./webcam";
 import { Dialog, ErrorNotice } from "./ui";
 
 const nav = [
@@ -104,6 +105,7 @@ function UploadDialog({ campaignId, close, done }: { campaignId: string; close: 
   const { health, healthError } = useWorkspace();
   const [file, setFile] = useState<File | null>(null);
   const [campaign, setCampaign] = useState(campaignId);
+  const [hasWebcam, setHasWebcam] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
   const [drag, setDrag] = useState(false);
   const [error, setError] = useState("");
@@ -112,7 +114,7 @@ function UploadDialog({ campaignId, close, done }: { campaignId: string; close: 
   const { data: initial } = useResource<Campaign>(campaignId ? "/campaigns/" + campaignId : null);
   const issue = healthError || health?.error || (health && !health.ffmpeg ? "Установите FFmpeg и FFprobe. Инструкция находится в README." : "")
     || (health && !health.whisper ? "Установите faster-whisper из backend/requirements.txt." : "")
-    || (health && !health.ollama ? "Запустите Ollama и установите модель: ollama pull " + health.ollama_model : "");
+    || (health && !health.ollama ? health.ollama_status.detail : "");
   const busy = progress !== null;
 
   function choose(value?: File) {
@@ -137,7 +139,7 @@ function UploadDialog({ campaignId, close, done }: { campaignId: string; close: 
     controller.current = abort;
     setError("");
     setProgress(0);
-    try { await uploadVideo(file, campaign, setProgress, abort.signal); done(); }
+    try { await uploadVideo(file, campaign, hasWebcam, setProgress, abort.signal); done(); }
     catch (error) { setError((error as Error).message); setProgress(null); }
     finally { controller.current = null; }
   }
@@ -156,6 +158,7 @@ function UploadDialog({ campaignId, close, done }: { campaignId: string; close: 
       </button>
       <fieldset disabled={busy} className="min-w-0">
         <CampaignField value={campaign} change={setCampaign} initial={initial ? [initial] : []}/>
+        <WebcamToggle value={hasWebcam} change={setHasWebcam}/>
       </fieldset>
       {(error || issue) && <ErrorNotice>{error || issue}</ErrorNotice>}
       {busy && <div className="upload-progress" role="status"><span>{progress === 100 ? "Проверка видео…" : "Загрузка " + progress + "%"}</span><progress max={100} value={progress}/></div>}

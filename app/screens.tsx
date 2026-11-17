@@ -14,6 +14,8 @@ import {
 import { Dialog, Empty, ErrorNotice, Loading, PageTitle } from "./ui";
 import { CampaignField, UploadButton, useWorkspace } from "./workspace";
 import { ImportButton } from "./import-link";
+import { WebcamDialog } from "./webcam";
+import { OllamaSettings } from "./ollama-settings";
 import { availabilityLabels, campaignPeriod, CampaignDialog, forecast, money } from "./advertising";
 
 const metrics = [
@@ -55,7 +57,8 @@ export function Dashboard() {
   const { revision, health, healthError } = useWorkspace();
   const { data, error } = useResource<Summary>("/summary", revision, 4000);
   const connectionIssue = healthError || health?.error || (health && !health.ffmpeg ? "Для обработки требуется FFmpeg." : "")
-    || (health && (!health.ollama || !health.whisper) ? "Проверьте локальные модели анализа." : "");
+    || (health && !health.ollama ? health.ollama_status.detail : "")
+    || (health && !health.whisper ? "Проверьте faster-whisper." : "");
   return <>
     <PageTitle title="Дашборд" description="Загрузка записей, очередь обработки и готовые клипы."
       action={<Link className="button secondary" href="/pipeline">Открыть конвейер <ArrowRight size={15}/></Link>}/>
@@ -94,6 +97,7 @@ export function Dashboard() {
 function SourceTable({ items, compact }: { items: Source[]; compact?: boolean }) {
   const { refresh } = useWorkspace();
   const [assignment, setAssignment] = useState<Source | null>(null);
+  const [webcam, setWebcam] = useState<Source | null>(null);
   const [retrying, setRetrying] = useState("");
   const [error, setError] = useState("");
   async function runAgain(id: string, action: "retry" | "reanalyze") {
@@ -119,6 +123,9 @@ function SourceTable({ items, compact }: { items: Source[]; compact?: boolean })
             <td><button type="button" className="text-link campaign-link" onClick={() => setAssignment(item)}><Link2 size={15}/>{item.cf_campaigns?.name ?? "Назначить"}</button></td>
             <td className="muted whitespace-nowrap">{date(item.created_at)}</td>
             <td><div className="source-actions">
+              <button className="button secondary button-small" type="button" onClick={() => setWebcam(item)}>
+                <Video size={14}/> Веб-камера{item.has_webcam ? " · Да" : ""}
+              </button>
               {item.status === "completed" && <Link className="button secondary button-small" href={"/clips?source=" + item.id}>Нарезки <ArrowRight size={14}/></Link>}
               {item.status === "failed" && <button className="button secondary button-small" type="button" onClick={() => runAgain(item.id, "retry")} disabled={!!retrying}><RefreshCw size={14} className={retrying === item.id ? "spin" : ""}/> Повторить</button>}
               {item.status === "completed" && item.duration >= 15 && <button className="icon-button" aria-label="Анализировать заново" title="Анализировать заново" type="button" onClick={() => runAgain(item.id, "reanalyze")} disabled={!!retrying}><RefreshCw size={14} className={retrying === item.id ? "spin" : ""}/></button>}
@@ -128,6 +135,7 @@ function SourceTable({ items, compact }: { items: Source[]; compact?: boolean })
       </table>
     </div>
     {assignment && <AssignmentDialog source={assignment} close={() => setAssignment(null)} done={() => { setAssignment(null); refresh(); }}/>}
+    {webcam && <WebcamDialog source={webcam} close={() => setWebcam(null)} done={() => { setWebcam(null); refresh(); }}/>}
   </>;
 }
 
@@ -218,12 +226,12 @@ function ClipGrid({ items, ranked, selected, toggle }: { items: Clip[]; ranked?:
           <span className="duration">{timecode(clip.end_seconds - clip.start_seconds)}</span>
         </button>
         <div className="clip-content"><h3 title={clip.title}>{clip.title}</h3>
-          <div className="clip-meta"><span title="Таймкод в исходной записи">{timecode(clip.start_seconds, 1)}–{timecode(clip.end_seconds, 1)}</span><span>{clip.cf_sources.aspect === "portrait" ? "9:16" : "16:9"}</span>
+          <div className="clip-meta"><span title="Таймкод в исходной записи">{timecode(clip.start_seconds, 1)}–{timecode(clip.end_seconds, 1)}</span><span>{clip.lossless || clip.cf_sources.aspect === "landscape" ? "16:9" : "9:16"}</span>
             {clip.category && <span className="clip-score" title="Оценка Qwen">{clip.score_percent}/100</span>}</div>
           {clip.category && <span className="badge clip-category">{clipCategories[clip.category]}</span>}
           {clip.reason && <p className="clip-reason">{clip.reason}</p>}
           {clip.cf_sources.cf_campaigns && <small className="muted">{clip.cf_sources.cf_campaigns.name}</small>}
-          <div className="clip-actions"><a className="button secondary button-small" href={path + "/download"}><ArrowDownToLine size={16}/> Скачать MP4</a>
+          <div className="clip-actions"><a className="button secondary button-small" href={path + "/download"}><ArrowDownToLine size={16}/> {clip.lossless ? "Скачать без потерь (MKV)" : "Скачать MP4"}</a>
             {toggle && <button className="button secondary button-small select-clip" type="button" aria-pressed={selected?.includes(clip.id) ?? false}
               disabled={selected?.length === 10 && !selected.includes(clip.id)} onClick={() => toggle(clip.id)}>
               {selected?.includes(clip.id) ? <Check size={15}/> : <Plus size={15}/>} {selected?.includes(clip.id) ? "Выбран" : "В монтаж"}
@@ -319,10 +327,11 @@ export function SettingsPage() {
         </ul>
         {(healthError || health?.error) && <ErrorNotice>{healthError || health?.error}</ErrorNotice>}
         {health && !health.ffmpeg && <ErrorNotice>Установите FFmpeg и FFprobe, затем перезапустите FastAPI.</ErrorNotice>}
-        {health && !health.ollama && <ErrorNotice>Запустите Ollama и выполните <code>ollama pull {health.ollama_model}</code>.</ErrorNotice>}
+        {health && !health.ollama && <ErrorNotice>{health.ollama_status.detail}</ErrorNotice>}
         {health && !health.whisper && <ErrorNotice>Установите faster-whisper из backend/requirements.txt.</ErrorNotice>}
         {!!health && <div className="connection-limit"><span>Лимит загрузки</span><strong>{fileSize(health.max_upload_bytes)}</strong></div>}
       </section>
+      <OllamaSettings health={health} refresh={refresh}/>
     </div>
   </>;
 }

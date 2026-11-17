@@ -7,12 +7,12 @@ from functools import lru_cache
 from importlib.util import find_spec
 from typing import Literal
 
-import httpx
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from .config import OLLAMA_MODEL, OLLAMA_URL, WHISPER_MODEL, WHISPER_THREADS
+from .config import WHISPER_MODEL, WHISPER_THREADS
 from .media import MediaError, read_media
+from . import ollama
 
 CHUNK_SECONDS = 120
 CHUNK_OVERLAP = 32
@@ -54,16 +54,6 @@ class Candidate:
 
 def whisper_installed():
     return find_spec("faster_whisper") is not None
-
-
-async def ollama_available():
-    try:
-        async with httpx.AsyncClient(timeout=2, trust_env=False) as client:
-            result = await client.get(f"{OLLAMA_URL}/api/tags")
-            result.raise_for_status()
-            return any(model["name"] == OLLAMA_MODEL for model in result.json()["models"])
-    except (httpx.HTTPError, KeyError, ValueError, TypeError):
-        return False
 
 
 @lru_cache(maxsize=1)
@@ -234,19 +224,7 @@ def contact_sheet(path, candidate, check):
     ], check=check)
 
 
-def require_model(client):
-    try:
-        response = client.post(f"{OLLAMA_URL}/api/show", json={"model": OLLAMA_MODEL}, timeout=10)
-        if response.status_code == 404:
-            raise MediaError(f"В Ollama нет модели {OLLAMA_MODEL}. Выполните ollama pull {OLLAMA_MODEL}.")
-        response.raise_for_status()
-        if "vision" not in response.json().get("capabilities", []):
-            raise MediaError(f"Модель {OLLAMA_MODEL} в Ollama должна поддерживать изображения.")
-    except (httpx.HTTPError, ValueError) as exc:
-        raise MediaError("Ollama недоступна. Запустите локальный сервер Ollama.") from exc
-
-
-def rate(client, path, candidate, check):
+def rate(client, model, path, candidate, check):
     picture = contact_sheet(path, candidate, check)
     if not picture:
         raise MediaError("Не удалось извлечь кадры для оценки Qwen.")
@@ -275,16 +253,15 @@ def rate(client, path, candidate, check):
          "images": [base64.b64encode(picture).decode("ascii")]},
     ]
     payload = {
-        "model": OLLAMA_MODEL, "stream": False, "think": False, "format": Rating.model_json_schema(),
+        "model": model, "stream": False, "think": False, "format": Rating.model_json_schema(),
         "messages": messages, "options": {"temperature": 0, "num_ctx": 4096, "num_predict": 350},
         "keep_alive": "10m",
     }
     for attempt in range(2):
         check()
         try:
-            response = client.post(f"{OLLAMA_URL}/api/chat", json=payload)
-            response.raise_for_status()
-            rating = Rating.model_validate_json(response.json()["message"]["content"])
+            response = ollama.chat(client, payload, check)
+            rating = Rating.model_validate_json(response["message"]["content"])
             if rating.category == "shout" and not candidate.voice:
                 return Rating(
                     category="other", score=min(rating.score, 49), title="Резкий звук",
@@ -295,9 +272,6 @@ def rate(client, path, candidate, check):
             if attempt == 1:
                 raise MediaError("Qwen не вернул пригодную оценку. Повторите обработку.") from exc
             payload["options"]["num_predict"] = 550
-        except httpx.HTTPError as exc:
-            if attempt == 1 or isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
-                raise MediaError(f"Ошибка оценки в Ollama ({OLLAMA_MODEL}). Проверьте модель и журнал Ollama.") from exc
 
 
 def select_highlights(scored, minimum=MIN_CLIP_SECONDS):
@@ -328,8 +302,9 @@ def analyze_highlights(path, source, progress, check):
         raise MediaError("Для анализа нужна запись длительностью не менее 15 секунд.")
     clip_length = min(duration, min(MAX_CLIP_SECONDS, max(MIN_CLIP_SECONDS, source["clip_seconds"])))
     candidates = []
-    with httpx.Client(timeout=httpx.Timeout(240, connect=5), trust_env=False) as client:
-        require_model(client)
+    connection = ollama.settings()
+    with ollama.client_for(connection) as client:
+        ollama.require_model(client, connection, check)
         for start in range(0, math.ceil(duration), CHUNK_SECONDS):
             check()
             end = min(duration, start + CHUNK_SECONDS)
@@ -340,7 +315,7 @@ def analyze_highlights(path, source, progress, check):
         progress(59)
         for index, candidate in enumerate(picked, start=1):
             check()
-            scored.append((candidate, rate(client, path, candidate, check)))
+            scored.append((candidate, rate(client, connection.model, path, candidate, check)))
             progress(59 + int(26 * index / len(picked)))
 
     return select_highlights(scored, minimum)

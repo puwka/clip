@@ -134,9 +134,9 @@ def promo_font(size):
     return ImageFont.load_default(size=size)
 
 
-def banner_canvas(banner_id, promo_code, placement, *, guide=False):
+def banner_canvas(banner_id, promo_code, placement, *, guide=False, band=AD_BAND):
     left, top, right, bottom = SAFE_ZONES[placement.platform]
-    left, top, right, bottom = max(left, AD_BAND[0]), max(top, AD_BAND[1]), min(right, AD_BAND[2]), min(bottom, AD_BAND[3])
+    left, top, right, bottom = max(left, band[0]), max(top, band[1]), min(right, band[2]), min(bottom, band[3])
     w, h = right - left, bottom - top
     width_limit = round(w * placement.width / 100)
     max_height = min(370, h)

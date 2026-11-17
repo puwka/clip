@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from .config import CLIP_DIR, FFMPEG, FFPROBE, SOURCE_DIR
-from .editor_layout import quality_args, scene_filter
+from .editor_layout import quality_args
 
 CREATE_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 VIDEO_INPUT = [
@@ -76,6 +76,27 @@ def encode(args, timeout, *, cwd=None):
         raise MediaError("FFmpeg превысил время экспорта клипа.") from exc
 
 
+def cut_highlight(path, start, end, master, preview, poster, check):
+    # Pad only when needed. Keep source pixels, cadence and audio channels.
+    blocks = "ceil(max(iw*sar/32,ih/18))"
+    already_wide = "eq(iw*sar*9,ih*16)"
+    frame = (f"pad=w='if({already_wide},iw,ceil(32*{blocks}/sar/2)*2)':"
+             f"h='if({already_wide},ih,18*{blocks})':x=(ow-iw)/2:y=(oh-ih)/2,"
+             "setsar=16*h/(9*w):max=100000")
+    encode(["-ss", f"{start:.6f}", *VIDEO_INPUT, "-i", str(path), "-t", f"{end-start:.6f}",
+            "-map", "0:V:0", "-map", "0:a?", "-vf", frame, "-fps_mode", "passthrough",
+            "-c:v", "ffv1", "-level", "3", "-slicecrc", "1", "-threads:v", "4",
+            "-c:a", "pcm_f64le", str(master)], timeout=900)
+    check()
+    encode(["-i", str(master), "-map", "0:v:0", "-map", "0:a:0?",
+            "-vf", "scale=w='min(iw,1280)':h=-2:flags=lanczos,format=yuv420p",
+            *quality_args("compact"), "-preset", "fast", "-c:a", "aac", "-movflags", "+faststart",
+            str(preview)], timeout=900)
+    check()
+    encode(["-i", str(preview), "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4",
+            "-update", "1", str(poster)], timeout=30)
+
+
 def process_source(source: dict, progress: Callable, check: Callable, outputs: list[Path]):
     path = SOURCE_DIR / f"{source['id']}{source['extension']}"
     if not path.is_file():
@@ -90,21 +111,11 @@ def process_source(source: dict, progress: Callable, check: Callable, outputs: l
         check()
         progress(86 + int(12 * index / len(segments)))
         clip_id = str(uuid4())
-        video = CLIP_DIR / f"{clip_id}.mp4"
+        master = CLIP_DIR / f"{clip_id}.mkv"
+        preview = CLIP_DIR / f"{clip_id}.mp4"
         poster = CLIP_DIR / f"{clip_id}.jpg"
-        outputs.extend([video, poster])
-        inputs = ["-ss", f"{start:.6f}", *VIDEO_INPUT, "-i", str(path)]
-        if not source["has_audio"]:
-            inputs += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
-        audio = "0:a:0" if source["has_audio"] else "1:a:0"
-        encode([
-            *inputs, "-t", f"{end - start:.6f}",
-            "-map", "0:V:0", "-map", audio, "-vf", f"fps=30,{scene_filter()}",
-            *quality_args(), "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(video),
-        ], timeout=900)
-        check()
-        encode(["-i", str(video), "-frames:v", "1", "-vf", "scale=480:-2",
-                "-q:v", "4", "-update", "1", str(poster)], timeout=30)
+        outputs.extend([master, preview, poster])
+        cut_highlight(path, start, end, master, preview, poster, check)
         clips.append({
             "id": clip_id,
             "title": rating.title,

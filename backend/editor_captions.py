@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 from PIL import ImageFont
 
-from .editor_layout import CAPTION_BAND, HEIGHT, TITLE_BAND, WIDTH
+from .editor_layout import CAPTION_BAND, HEIGHT, TITLE_BAND, WEBCAM_CAPTION_BAND, WEBCAM_TITLE_BAND, WIDTH
 from .highlights import AUDIO_RATE, whisper
 from .media import MediaError, read_media
 
@@ -170,7 +170,7 @@ def word_groups(words, font, width, count):
         yield group
 
 
-def write_overlays(workdir, words, source_start, options, title, lo, hi):
+def write_overlays(workdir, words, source_start, options, title, lo, hi, *, webcam=False):
     if not title and not words:
         return []
     regular, bold, family = font_files()
@@ -182,8 +182,8 @@ def write_overlays(workdir, words, source_start, options, title, lo, hi):
         if not target.exists():
             shutil.copyfile(font, target)
 
-    title_left, title_top, title_right, title_bottom = TITLE_BAND
-    cap_left, cap_top, cap_right, cap_bottom = CAPTION_BAND
+    title_left, title_top, title_right, title_bottom = WEBCAM_TITLE_BAND if webcam else TITLE_BAND
+    cap_left, cap_top, cap_right, cap_bottom = WEBCAM_CAPTION_BAND if webcam else CAPTION_BAND
     title_width = title_right - title_left - 24
     cap_x = WIDTH // 2
     title_size, headings = title_lines(title, bold, min(options.title_size, 76), title_width)

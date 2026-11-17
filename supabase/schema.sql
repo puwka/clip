@@ -56,6 +56,8 @@ create table if not exists public.cf_sources (
 create index if not exists cf_sources_queue_idx on public.cf_sources (created_at)
   where status in ('queued', 'processing');
 alter table public.cf_sources add column if not exists twitch_capture boolean not null default false;
+alter table public.cf_sources add column if not exists has_webcam boolean not null default false;
+alter table public.cf_sources add column if not exists webcam_region jsonb;
 create index if not exists cf_sources_campaign_idx on public.cf_sources (campaign_id);
 create index if not exists cf_sources_created_idx on public.cf_sources (created_at desc, id desc);
 
@@ -313,13 +315,13 @@ begin
   if not found then return false; end if;
   if p_error is null then
     insert into public.cf_sources (
-      id, name, extension, byte_size, duration, has_audio, clip_seconds, clip_count, aspect, campaign_id
+      id, name, extension, byte_size, duration, has_audio, clip_seconds, clip_count, aspect, campaign_id, has_webcam
     )
     select s.id, s.name, s.extension, s.byte_size, s.duration, s.has_audio,
-      s.clip_seconds, s.clip_count, s.aspect, c.id
+      s.clip_seconds, s.clip_count, s.aspect, c.id, coalesce(s.has_webcam, false)
     from jsonb_to_record(p_source) as s(
       id uuid, name text, extension text, byte_size bigint, duration double precision,
-      has_audio boolean, clip_seconds integer, clip_count integer, aspect text, campaign_id uuid
+      has_audio boolean, clip_seconds integer, clip_count integer, aspect text, campaign_id uuid, has_webcam boolean
     )
     left join public.cf_campaigns c on c.id = s.campaign_id
     returning id into new_source;

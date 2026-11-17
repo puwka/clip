@@ -65,7 +65,7 @@ class TwitchCaptureTest(unittest.TestCase):
 
 
 class TwitchHandoffTest(unittest.IsolatedAsyncioTestCase):
-    async def test_retries_after_lost_source_and_export_responses(self):
+    async def test_handoff_retries_after_lost_response_and_leaves_editing_manual(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             source_id = str(uuid4())
@@ -75,24 +75,15 @@ class TwitchHandoffTest(unittest.IsolatedAsyncioTestCase):
                 "source_id": source_id, "extension": ".ts", "name": "Twitch", "clip_seconds": 30, "ad": None,
             }), encoding="utf-8")
             db = Mock()
-            db.get = AsyncMock(side_effect=[
-                [], [{"status": "queued"}], [{"status": "completed"}], [],
-                [{"id": str(uuid4()), "start_seconds": 0, "end_seconds": 15}],
-                [{"status": "completed"}], [{"id": str(uuid4())}],
-            ])
+            db.get = AsyncMock(side_effect=[[], [{"id": source_id}]])
             db.request = AsyncMock(side_effect=HTTPException(503))
-            queue = AsyncMock(side_effect=HTTPException(503))
             with (patch.object(twitch_api, "SOURCE_DIR", directory),
-                  patch.object(twitch_api, "probe", return_value=(30, True)),
-                  patch.object(twitch_api, "queue_edits", queue)):
-                with self.assertRaises(HTTPException):
-                    await twitch_api.handoff_segment(db, manifest)
-                await twitch_api.handoff_segment(db, manifest)
+                  patch.object(twitch_api, "probe", return_value=(30, True))):
                 with self.assertRaises(HTTPException):
                     await twitch_api.handoff_segment(db, manifest)
                 self.assertTrue(manifest.exists())
                 await twitch_api.handoff_segment(db, manifest)
             db.request.assert_awaited_once()
-            queue.assert_awaited_once()
-            self.assertEqual(str(queue.await_args.args[1].id), source_id)
+            self.assertEqual(db.get.await_count, 2)
+            self.assertTrue(all(call.args == ("cf_sources",) for call in db.get.await_args_list))
             self.assertFalse(manifest.exists())

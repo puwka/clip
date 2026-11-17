@@ -1,0 +1,10 @@
+.env
+.env.*
+.venv
+.next
+.git
+.vercel
+data
+node_modules
+**/__pycache__
+**/*.pyc

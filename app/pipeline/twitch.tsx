@@ -5,6 +5,7 @@ import { useState, type FormEvent } from "react";
 import { request, timecode, useResource } from "../lib";
 import { ErrorNotice } from "../ui";
 import { CampaignField, useWorkspace } from "../workspace";
+import { WebcamToggle } from "../webcam";
 
 const statuses = {
   connecting: "Подключение",
@@ -34,6 +35,7 @@ export function TwitchRecording() {
   }>("/twitch", revision, 2000);
   const [url, setUrl] = useState("");
   const [campaign, setCampaign] = useState("");
+  const [hasWebcam, setHasWebcam] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const recording = data?.recording;
@@ -49,7 +51,7 @@ export function TwitchRecording() {
       } else {
         await request("/twitch", {
           method: "POST",
-          body: JSON.stringify({ url, campaign_id: campaign || null }),
+          body: JSON.stringify({ url, campaign_id: campaign || null, has_webcam: hasWebcam }),
         });
       }
       reload();
@@ -69,6 +71,7 @@ export function TwitchRecording() {
             placeholder="https://www.twitch.tv/channel" required/>
         </label>
         <CampaignField value={campaign} change={setCampaign} forExport/>
+        <WebcamToggle value={hasWebcam} change={setHasWebcam} disabled={busy}/>
       </>}
       {recording && <div role="status">
         <strong>{recording.channel} · {statuses[recording.status]}</strong>
