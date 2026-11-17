@@ -6,5 +6,6 @@
 .vercel
 data
 node_modules
+backend/requirements.txt
 **/__pycache__
 **/*.pyc
