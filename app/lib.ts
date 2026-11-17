@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-export const API = (process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
+export const API = (process.env.NEXT_PUBLIC_SAME_ORIGIN_API === "1"
+  ? "/api" : process.env.NEXT_PUBLIC_API_URL || "/api").replace(/\/$/, "");
 export const sourceLabels = { queued: "В очереди", processing: "В обработке", completed: "Готово", failed: "Ошибка" };
 export const campaignLabels = { draft: "Черновик", active: "Активна", paused: "На паузе", finished: "Завершена" };
 export const clipCategories = { funny: "Смешной момент", shout: "Крик", crash: "Авария", surprise: "Неожиданность", other: "Другой момент" };
@@ -63,7 +64,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     });
   } catch (error) {
     if (init.signal?.aborted) throw error;
-    throw new Error("Нет связи с локальным сервером FastAPI.");
+    throw new Error(API === "/api" ? "Нет связи с API на Vercel." : "Нет связи с локальным сервером FastAPI.");
   }
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(reason(data));

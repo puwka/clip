@@ -10,19 +10,18 @@ async function forward(request: NextRequest, context: RouteContext<"/api/[...pat
   const base = process.env.CLIP_BACKEND_URL;
   if (!base) return Response.json({ detail: "Внутреннее подключение FastAPI не настроено." }, { status: 503 });
 
-  const { path } = await context.params;
-  if (path.some(segment => segment === "." || segment === ".." || /[/\\]/.test(segment))) {
-    return Response.json({ detail: "Недопустимый путь API." }, { status: 400 });
-  }
-  const url = new URL(path.map(encodeURIComponent).join("/"), base.replace(/\/+$/, "") + "/");
-  url.search = request.nextUrl.search;
-  const headers = new Headers();
-  for (const name of requestHeaders) {
-    const value = request.headers.get(name);
-    if (value !== null) headers.set(name, value);
-  }
-
   try {
+    const { path } = await context.params;
+    if (path.some(segment => segment === "." || segment === ".." || /[/\\]/.test(segment))) {
+      return Response.json({ detail: "Недопустимый путь API." }, { status: 400 });
+    }
+    const url = new URL(path.map(encodeURIComponent).join("/"), base.replace(/\/+$/, "") + "/");
+    url.search = new URL(request.url).search;
+    const headers = new Headers();
+    for (const name of requestHeaders) {
+      const value = request.headers.get(name);
+      if (value !== null) headers.set(name, value);
+    }
     const options: RequestInit & { duplex?: "half" } = {
       method: request.method, headers, cache: "no-store", redirect: "manual", signal: request.signal,
     };
@@ -37,7 +36,8 @@ async function forward(request: NextRequest, context: RouteContext<"/api/[...pat
       if (value !== null) outgoing.set(name, value);
     }
     return new Response(upstream.body, { status: upstream.status, headers: outgoing });
-  } catch {
+  } catch (error) {
+    console.error("FastAPI binding request failed", error instanceof Error ? error.name : "UnknownError");
     return Response.json({ detail: "Нет связи с внутренним сервисом FastAPI." }, { status: 502 });
   }
 }
