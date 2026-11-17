@@ -40,12 +40,9 @@ PAGE_SIZE = 24
 
 @asynccontextmanager
 async def lifespan(app):
-    SOURCE_DIR.mkdir(exist_ok=True, parents=True)
-    CLIP_DIR.mkdir(exist_ok=True, parents=True)
-    EDIT_DIR.mkdir(exist_ok=True, parents=True)
-    BANNER_DIR.mkdir(exist_ok=True, parents=True)
-    IMPORT_DIR.mkdir(exist_ok=True, parents=True)
-    TWITCH_DIR.mkdir(exist_ok=True, parents=True)
+    if not VERCEL_HOSTED:
+        for directory in (SOURCE_DIR, CLIP_DIR, EDIT_DIR, BANNER_DIR, IMPORT_DIR, TWITCH_DIR):
+            directory.mkdir(exist_ok=True, parents=True)
     app.state.db = Database()
     app.state.recording = None
     app.state.recording_task = None

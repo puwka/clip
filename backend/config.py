@@ -6,7 +6,10 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
-VERCEL_HOSTED = os.getenv("VERCEL_ENV") in {"preview", "production"}
+VERCEL_HOSTED = (
+    os.getenv("VERCEL_ENV") in {"preview", "production"}
+    or bool(os.getenv("AWS_LAMBDA_FUNCTION_NAME"))
+)
 DATA = (ROOT / os.getenv("CLIP_DATA_DIR", "/tmp/clip-factory" if VERCEL_HOSTED else "data")).resolve()
 SOURCE_DIR = DATA / "sources"
 CLIP_DIR = DATA / "clips"

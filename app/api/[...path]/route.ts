@@ -30,6 +30,11 @@ async function forward(request: NextRequest, context: RouteContext<"/api/[...pat
       options.duplex = "half";
     }
     const upstream = await fetch(url, options);
+    if (upstream.status >= 500 && !upstream.headers.get("content-type")?.includes("application/json")) {
+      console.error("FastAPI service returned a platform error", upstream.status, upstream.headers.get("x-vercel-error"));
+      await upstream.body?.cancel();
+      return Response.json({ detail: "Внутренний сервис FastAPI вернул ошибку запуска." }, { status: 502 });
+    }
     const outgoing = new Headers({ "Cache-Control": "private, no-store" });
     for (const name of responseHeaders) {
       const value = upstream.headers.get(name);
