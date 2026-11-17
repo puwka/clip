@@ -68,7 +68,7 @@ Docker не нужен. Для обычного запуска собранно�
 
 `vercel.json` объединяет Next.js и внутренний FastAPI. Браузер вызывает `/api/*` на домене Next.js, а обработчик этого маршрута использует выданный Vercel binding `CLIP_BACKEND_URL`. Для облачного проекта оставьте `NEXT_PUBLIC_API_URL` пустым. Для проверки через `npx vercel dev` временно уберите локальное значение `NEXT_PUBLIC_API_URL` из файла окружения и не задавайте binding вручную.
 
-Облачный режим предназначен для просмотра каталога. Для подключения реальной базы настройте Deployment Protection и добавьте серверные переменные `SUPABASE_URL` и `SUPABASE_SECRET_KEY` через Vercel. Полный конвейер требует постоянно работающего обработчика, общего постоянного хранилища и отдельного пути для больших загрузок. Загрузка, очередь обработки и изменение настроек доступны в локальном режиме. [Vercel Services](https://vercel.com/docs/services) · [Лимиты Vercel Functions](https://vercel.com/docs/functions/limitations)
+Облачный режим предназначен для просмотра каталога. Корневой `requirements.txt` используется Vercel, а `backend/requirements.txt` устанавливает полный локальный видеоконвейер. Для подключения реальной базы настройте Deployment Protection и добавьте серверные переменные `SUPABASE_URL` и `SUPABASE_SECRET_KEY` через Vercel. Полный конвейер требует постоянно работающего обработчика, общего постоянного хранилища и отдельного пути для больших загрузок. Загрузка, очередь обработки и изменение настроек доступны в локальном режиме. [Vercel Services](https://vercel.com/docs/services) · [Лимиты Vercel Functions](https://vercel.com/docs/functions/limitations)
 
 ## Конвейер
 

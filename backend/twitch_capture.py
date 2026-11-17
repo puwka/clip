@@ -9,8 +9,6 @@ import time
 from fractions import Fraction
 from uuid import uuid4
 
-import av
-
 from .config import FFMPEG, MAX_BYTES, SOURCE_DIR, TWITCH_DIR, TWITCH_RESERVE_BYTES
 from .media import CREATE_FLAGS, MediaError
 
@@ -34,6 +32,7 @@ def atomic_json(path, data):
 
 class Segment:
     def __init__(self, recording, streams, timestamp, decode_timestamp, transport_stream):
+        import av
         self.id = str(uuid4())
         self.start = timestamp
         self.decode_start = decode_timestamp
@@ -86,6 +85,7 @@ class Segment:
 
 
 def capture_packets(source, recording):
+    import av
     video = next((stream for stream in source.streams.video
                   if not stream.disposition & av.stream.Disposition.attached_pic), None)
     if video is None:
@@ -164,6 +164,7 @@ class Recording:
         }
 
     def run(self):
+        import av
         failures = 0
         try:
             while not self.stop.is_set():
