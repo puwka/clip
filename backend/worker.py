@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import threading
+import shutil
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -11,6 +13,7 @@ from .editor import render_edit
 from .link_import import import_link_path, process_import
 from .media import MediaError, process_source
 from .twitch_capture import check_space
+from . import recovery
 
 logger = logging.getLogger(__name__)
 QUEUES = {
@@ -29,6 +32,8 @@ async def process_job(db, record, token, stop, kind):
     aborted = threading.Event()
     outputs = []
     committing = False
+    saved_path = None
+    reused_path = None
     twitch_job = record.get("twitch_capture") or (
         kind == "edit" and record.get("batch_id") == record["segments"][0]["source_id"]
     )
@@ -69,7 +74,20 @@ async def process_job(db, record, token, stop, kind):
     previous_clips = []
     try:
         try:
-            if kind == "edit":
+            reused_path, saved = recovery.previous(kind, record)
+            if saved is not None:
+                result = saved["result"]
+                outputs.extend(map(Path, saved["outputs"]))
+                if kind == "edit":
+                    # cf_edit_finish uses the current lease token as artifact ID.
+                    original = EDIT_DIR / saved["token"]
+                    outputs = []
+                    for suffix in (".mp4", ".review.json"):
+                        target = EDIT_DIR / f"{token}{suffix}"
+                        shutil.copyfile(str(original) + suffix, target)
+                        outputs.append(target)
+                set_progress(98)
+            elif kind == "edit":
                 outputs.extend((EDIT_DIR / f"{token}.mp4", EDIT_DIR / f"{token}.review.json"))
                 if record.get("ad"):
                     campaigns = await db.get("cf_campaigns", id=f"eq.{record['campaign_id']}", limit=1)
@@ -82,7 +100,6 @@ async def process_job(db, record, token, stop, kind):
             else:
                 previous_clips = await db.get("cf_clips", select="id,category", source_id=f"eq.{record['id']}")
                 result = await asyncio.to_thread(process_source, record, set_progress, check, outputs)
-            check()
             error = None
         except LeaseLost:
             return
@@ -97,12 +114,29 @@ async def process_job(db, record, token, stop, kind):
                 error = str(exc.detail)
             else:
                 error = "Ошибка обработки. Проверьте свободное место и журнал API."
+        if error is None:
+            saved_path = recovery.checkpoint(kind, record, token, result, outputs)
+            committing = True
         if not aborted.is_set() and not stop.is_set():
             # A lost HTTP response may hide a successful commit. Keep its files.
             committing = error is None
-            accepted = await db.rpc(prefix + "_finish", {**identity, result_field: result, "p_error": error})
-            committing = accepted and error is None
-            if committing:
+            while not stop.is_set() and not aborted.is_set():
+                try:
+                    accepted = await db.rpc(prefix + "_finish", {**identity, result_field: result, "p_error": error})
+                    break
+                except HTTPException:
+                    logger.warning("Результат задачи %s сохранён на диске. Ожидание Supabase.", record["id"])
+                    try:
+                        await asyncio.wait_for(stop.wait(), timeout=5)
+                    except TimeoutError:
+                        pass
+            else:
+                return
+            if accepted and error is None:
+                if saved_path:
+                    saved_path.unlink(missing_ok=True)
+                if reused_path:
+                    reused_path.unlink(missing_ok=True)
                 if kind == "import":
                     remove_output(import_link_path(record["id"]))
                 for clip in previous_clips:

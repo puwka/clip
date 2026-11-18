@@ -106,7 +106,7 @@ def client_for(connection):
 
 
 def retry_post(client, route, payload, check, *, timeout=REQUEST_TIMEOUT):
-    for attempt in range(3):
+    for attempt in range(8):
         check()
         try:
             response = client.post(route, json=payload, timeout=timeout)
@@ -114,12 +114,15 @@ def retry_post(client, route, payload, check, *, timeout=REQUEST_TIMEOUT):
             check()
             return response.json()
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code not in RETRYABLE or attempt == 2:
+            if exc.response.status_code not in RETRYABLE or attempt == 7:
                 raise
         except httpx.TransportError:
-            if attempt == 2:
+            if attempt == 7:
                 raise
-        time.sleep(0.75 * 2 ** attempt)
+        until = time.monotonic() + min(30, .75 * 2 ** attempt)
+        while time.monotonic() < until:
+            check()
+            time.sleep(min(.5, max(0, until - time.monotonic())))
 
 
 def status(connection):
