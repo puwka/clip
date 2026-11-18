@@ -228,10 +228,10 @@ function ClipGrid({ items, ranked, selected, toggle }: { items: Clip[]; ranked?:
           <span className="duration">{timecode(clip.end_seconds - clip.start_seconds)}</span>
         </button>
         <div className="clip-content"><h3 title={clip.title}>{clip.title}</h3>
+          {clip.reason && <p className="clip-reason">{clip.reason}</p>}
           <div className="clip-meta"><span title="Таймкод в исходной записи">{timecode(clip.start_seconds, 1)}–{timecode(clip.end_seconds, 1)}</span><span>{clip.lossless || clip.cf_sources.aspect === "landscape" ? "16:9" : "9:16"}</span>
             {clip.category && <span className="clip-score" title="Оценка Qwen">{clip.score_percent}/100</span>}</div>
           {clip.category && <span className="badge clip-category">{clipCategories[clip.category]}</span>}
-          {clip.reason && <p className="clip-reason">{clip.reason}</p>}
           {clip.cf_sources.cf_campaigns && <small className="muted">{clip.cf_sources.cf_campaigns.name}</small>}
           <div className="clip-actions"><a className="button secondary button-small" href={path + "/download"}><ArrowDownToLine size={16}/> {clip.lossless ? "Скачать без потерь (MKV)" : "Скачать MP4"}</a>
             {toggle && <button className="button secondary button-small select-clip" type="button" aria-pressed={selected?.includes(clip.id) ?? false}

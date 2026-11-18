@@ -34,8 +34,8 @@ class Rating(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
     score: int = Field(ge=0, le=100)
     category: Literal["funny", "shout", "crash", "surprise", "other"]
-    title: str = Field(min_length=1, max_length=90)
-    reason: str = Field(min_length=1, max_length=240)
+    title: str = Field(min_length=1, max_length=60, description="Короткое название момента на русском, 2–6 слов.")
+    reason: str = Field(min_length=1, max_length=240, description="Описание происходящего в клипе на русском, 1–2 коротких предложения.")
 
 
 @dataclass(frozen=True)
@@ -247,8 +247,12 @@ def rate(client, model, path, candidate, check):
          "высокая громкость сама по себе не доказывает крик или аварию. "
          "Для shout нужен голос у пика (voice_near_peak) и явная резкая вокальная реакция. "
          "Шкала 0–100: 0–24 рутина, 25–49 умеренная активность, 50–74 интересный момент, "
-         "75–89 явный яркий момент, 90–100 исключительный. Короткие title и reason пиши по-русски. "
-         "В reason укажи только наблюдаемое основание оценки, до 18 слов. Верни один JSON по схеме."},
+         "75–89 явный яркий момент, 90–100 исключительный. "
+         "Для карточки клипа напиши по-русски title — короткое конкретное название из 2–6 слов, до 60 символов. "
+         "В reason напиши небольшое описание происходящего, 1–2 предложения, до 30 слов и 240 символов. "
+         "Описание должно быть понятно зрителю без исходной записи. Опирайся на кадры и реплики. "
+         "Не перечисляй технические измерения, не объясняй выставленную оценку и не выдумывай события. "
+         "Верни один JSON по схеме."},
         {"role": "user", "content": json.dumps(evidence, ensure_ascii=False),
          "images": [base64.b64encode(picture).decode("ascii")]},
     ]
