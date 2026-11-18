@@ -7,10 +7,16 @@ const requestHeaders = ["accept", "content-type", "range", "if-none-match", "if-
 const responseHeaders = ["content-type", "content-disposition", "content-range", "accept-ranges", "etag", "last-modified"];
 
 async function forward(request: NextRequest, context: RouteContext<"/api/[...path]">) {
-  const base = process.env.CLIP_BACKEND_URL;
+  const base = process.env.CLIP_BACKEND_URL || (process.env.CLIP_SHARED_MODE === "1" ? "http://127.0.0.1:8000" : undefined);
   if (!base) return Response.json({ detail: "Внутреннее подключение FastAPI не настроено." }, { status: 503 });
 
   try {
+    if (request.method === "POST" || request.method === "PATCH") {
+      const origin = request.headers.get("origin");
+      if (origin && new URL(origin).host !== request.headers.get("host")) {
+        return Response.json({ detail: "Запрос с другого сайта отклонён." }, { status: 403 });
+      }
+    }
     const { path } = await context.params;
     if (path.some(segment => segment === "." || segment === ".." || /[/\\]/.test(segment))) {
       return Response.json({ detail: "Недопустимый путь API." }, { status: 400 });

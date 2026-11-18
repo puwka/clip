@@ -4,6 +4,6 @@ const hosted = process.env.VERCEL_ENV === "production" || process.env.VERCEL_ENV
 const config: NextConfig = {
   devIndicators: false,
   agentRules: false,
-  env: { NEXT_PUBLIC_SAME_ORIGIN_API: hosted ? "1" : "0" },
+  env: { NEXT_PUBLIC_SAME_ORIGIN_API: hosted || process.env.CLIP_SHARED_MODE === "1" ? "1" : "0" },
 };
 export default config;
