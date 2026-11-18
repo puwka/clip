@@ -25,6 +25,21 @@ def decode(path, digest):
 
 
 class TwitchCaptureTest(unittest.TestCase):
+    def test_windows_pipe_is_read_as_nonseekable_live_input(self):
+        process = subprocess.Popen([
+            FFMPEG, "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=96x64:r=5",
+            "-t", "2", "-c:v", "libx264", "-f", "mpegts", "pipe:1",
+        ], stdout=subprocess.PIPE)
+        try:
+            with av.open(twitch_capture.LiveInput(process.stdout), mode="r") as source:
+                self.assertEqual(len(list(source.decode(video=0))), 10)
+            self.assertEqual(process.wait(timeout=10), 0)
+        finally:
+            process.stdout.close()
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+
     def test_two_hour_archive_preserves_frames_and_skips_analysis(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

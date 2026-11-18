@@ -18,6 +18,22 @@ logger = logging.getLogger(__name__)
 DISK_CHECK_SECONDS = 1
 
 
+class LiveInput:
+    """Expose a subprocess pipe as a forward-only stream to FFmpeg."""
+
+    def __init__(self, pipe):
+        self.pipe = pipe
+
+    def read(self, size=-1):
+        return self.pipe.read(size)
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return False
+
+
 def check_space(directory=None):
     if shutil.disk_usage(directory or SOURCE_DIR).free <= TWITCH_RESERVE_BYTES:
         raise MediaError("Достигнут резерв свободного места для записи Twitch.")
@@ -189,7 +205,7 @@ class Recording:
                     ], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, creationflags=CREATE_FLAGS)
                     self.process = process
                 try:
-                    with av.open(process.stdout, mode="r", options={"fflags": "+discardcorrupt"}) as source:
+                    with av.open(LiveInput(process.stdout), mode="r", options={"fflags": "+discardcorrupt"}) as source:
                         capture_packets(source, self)
                 except av.error.FFmpegError:
                     logger.info("Вход Twitch прервался: %s", self.channel, exc_info=True)
