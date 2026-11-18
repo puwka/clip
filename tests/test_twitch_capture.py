@@ -25,6 +25,30 @@ def decode(path, digest):
 
 
 class TwitchCaptureTest(unittest.TestCase):
+    def test_two_hour_archive_preserves_frames_and_skips_analysis(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source = directory / "input.ts"
+            archive = directory / "external-drive"
+            archive.mkdir()
+            subprocess.run([
+                FFMPEG, "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=96x64:r=1",
+                "-frames:v", "7210", "-c:v", "libx264", "-g", "5", "-sc_threshold", "0", str(source),
+            ], check=True, timeout=60)
+            recording = twitch_capture.Recording("test", 120, 30, None, archive_directory=archive)
+            with av.open(str(source)) as capture, patch.object(twitch_capture, "TWITCH_RESERVE_BYTES", 0):
+                twitch_capture.capture_packets(capture, recording)
+            files = sorted(archive.glob("*.ts"))
+            self.assertEqual(len(files), 2)
+            self.assertEqual(sorted(probe(path)[0] for path in files), [10, 7200])
+            original, result = sha256(), sha256()
+            decode(source, original)
+            for path in files:
+                decode(path, result)
+            self.assertEqual(original.digest(), result.digest())
+            self.assertFalse(list(archive.glob("*.part")))
+            self.assertFalse(list(archive.glob("*.json")))
+
     def test_switch_at_keyframe_and_keep_final_segment(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

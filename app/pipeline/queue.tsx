@@ -69,6 +69,7 @@ export function Pipeline() {
     <PageTitle title="Конвейер" description="От загрузки и ИИ-анализа до монтажа, рекламы и скачивания." action={
       <div className="queue-actions"><ImportButton/><UploadButton/></div>}/>
     <TwitchRecording/>
+    <TwitchRecording archive/>
     <div className="queue-toolbar"><div className="segmented" aria-label="Фильтр очереди">
       <button type="button" aria-pressed={!pending} onClick={() => setPending(false)}>Все задачи</button>
       <button type="button" aria-pressed={pending} onClick={() => setPending(true)}>В работе</button>

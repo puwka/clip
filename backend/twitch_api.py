@@ -3,18 +3,19 @@ import json
 import logging
 import re
 import shutil
+from pathlib import Path
 from importlib.util import find_spec
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, Request
 from filelock import FileLock, Timeout
 from pydantic import BaseModel, Field
 
 from .advertising import EditAd, banner_path, campaign_state
-from .config import FFMPEG, FFPROBE, SOURCE_DIR, TWITCH_DIR
+from .config import DATA, FFMPEG, FFPROBE, SOURCE_DIR, TWITCH_DIR
 from .highlights import MAX_CLIPS
 from .media import MediaError, probe
-from .twitch_capture import Recording, check_space
+from .twitch_capture import Recording, check_space, atomic_json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/twitch", tags=["Twitch"])
@@ -26,12 +27,20 @@ class StartRecording(BaseModel):
     url: str = Field(max_length=200)
     campaign_id: UUID | None = None
     has_webcam: bool = False
+    archive_directory: str | None = Field(default=None, max_length=1024)
+
+
+@router.get("/archive-settings")
+def archive_settings():
+    path = DATA / "archive-settings.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"directory": ""}
 
 
 @router.get("")
 async def status(request: Request):
     state = request.app.state
     return {"recording": state.recording.snapshot() if state.recording else None,
+            "archive": state.archive_recording.snapshot() if state.archive_recording else None,
             "handoff_error": state.twitch_error}
 
 
@@ -42,18 +51,32 @@ async def start(request: Request, data: StartRecording):
         raise HTTPException(422, "Укажите ссылку на канал Twitch, например https://www.twitch.tv/канал.")
     if not find_spec("streamlink") or not (shutil.which(FFMPEG) and shutil.which(FFPROBE)):
         raise HTTPException(503, "Для записи установите Streamlink, FFmpeg и FFprobe.")
+    directory = None
+    if data.archive_directory is not None:
+        directory = Path(data.archive_directory.strip())
+        if not directory.is_absolute() or not directory.is_dir():
+            raise HTTPException(422, "Укажите существующую папку на подключённом диске.")
+        directory = directory.resolve()
+        try:
+            test = directory / f".clip-write-test-{uuid4()}"
+            with test.open("xb") as file:
+                file.write(b"Clip Factory")
+            test.unlink()
+        except OSError as exc:
+            raise HTTPException(507, "Нет доступа для записи в выбранную папку.") from exc
     try:
-        check_space()
+        check_space(directory)
     except MediaError as exc:
         raise HTTPException(507, str(exc)) from exc
 
     state = request.app.state
-    rows = await state.db.get("cf_settings", id="eq.1", limit=1)
+    rows = ([{"twitch_segment_minutes": 120, "clip_seconds": 30}] if directory else
+            await state.db.get("cf_settings", id="eq.1", limit=1))
     if not rows or "twitch_segment_minutes" not in rows[0]:
         raise HTTPException(503, "Обновите схему Supabase для записи Twitch.")
     settings = rows[0]
     ad = None
-    if data.campaign_id:
+    if data.campaign_id and not directory:
         campaigns = await state.db.get("cf_campaigns", id=f"eq.{data.campaign_id}", limit=1)
         if (not campaigns or campaign_state(campaigns[0]) != "available" or
                 not banner_path(campaigns[0]["banner_id"]).is_file()):
@@ -62,16 +85,26 @@ async def start(request: Request, data: StartRecording):
         ad = EditAd(campaign_id=data.campaign_id, placement=campaign["placement"],
                     expected_views=campaign["expected_views"]).model_dump(mode="json")
 
-    if state.recording_task and not state.recording_task.done():
+    task_name = "archive_task" if directory else "recording_task"
+    recording_name = "archive_recording" if directory else "recording"
+    task = getattr(state, task_name)
+    if task and not task.done():
         raise HTTPException(409, "На этом компьютере уже идёт запись Twitch.")
-    lock = FileLock(TWITCH_DIR / "recording.lock")
+    TWITCH_DIR.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(TWITCH_DIR / ("archive.lock" if directory else "recording.lock"))
     try:
         lock.acquire(timeout=0)
     except Timeout as exc:
         raise HTTPException(409, "На этом компьютере уже идёт запись Twitch.") from exc
     recording = Recording(match[1].lower(), settings["twitch_segment_minutes"], settings["clip_seconds"], ad,
-                          has_webcam=data.has_webcam)
-    state.recording = recording
+                          has_webcam=data.has_webcam, archive_directory=directory)
+    if directory:
+        try:
+            atomic_json(DATA / "archive-settings.json", {"directory": str(directory)})
+        except OSError:
+            lock.release()
+            raise HTTPException(507, "Не удалось сохранить папку архива.")
+    setattr(state, recording_name, recording)
 
     async def run():
         try:
@@ -79,14 +112,15 @@ async def start(request: Request, data: StartRecording):
         finally:
             lock.release()
 
-    state.recording_task = asyncio.create_task(run())
+    setattr(state, task_name, asyncio.create_task(run()))
     return recording.snapshot()
 
 
 @router.post("/{recording_id}/stop")
 async def stop(request: Request, recording_id: UUID):
-    recording = request.app.state.recording
-    if not recording or recording.id != str(recording_id):
+    recording = next((item for item in (request.app.state.recording, request.app.state.archive_recording)
+                      if item and item.id == str(recording_id)), None)
+    if not recording:
         raise HTTPException(404, "Запись не найдена.")
     if recording.status not in {"finished", "failed"}:
         recording.status = "stopping"

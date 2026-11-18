@@ -6,6 +6,8 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
+from datetime import datetime
 from fractions import Fraction
 from uuid import uuid4
 
@@ -16,8 +18,8 @@ logger = logging.getLogger(__name__)
 DISK_CHECK_SECONDS = 1
 
 
-def check_space():
-    if shutil.disk_usage(SOURCE_DIR).free <= TWITCH_RESERVE_BYTES:
+def check_space(directory=None):
+    if shutil.disk_usage(directory or SOURCE_DIR).free <= TWITCH_RESERVE_BYTES:
         raise MediaError("Достигнут резерв свободного места для записи Twitch.")
 
 
@@ -38,21 +40,25 @@ class Segment:
         self.decode_start = decode_timestamp
         self.duration = 0.0
         self.extension = ".ts" if transport_stream else ".mkv"
-        self.partial = SOURCE_DIR / f"{self.id}.twitch.part"
-        self.final = SOURCE_DIR / f"{self.id}{self.extension}"
+        directory = recording.archive_directory or SOURCE_DIR
+        name = (f"{recording.channel}-{datetime.now():%Y-%m-%d_%H-%M-%S}-{self.id[:8]}"
+                if recording.archive_directory else self.id)
+        self.partial = directory / f"{name}.twitch.part"
+        self.final = directory / f"{name}{self.extension}"
         self.manifest = TWITCH_DIR / f"{self.id}.json"
         minutes = recording.minutes
         self.target = minutes * 60
         number = recording.segment + 1
-        atomic_json(self.manifest, {
-            "source_id": self.id,
-            "recording_id": recording.id,
-            "name": f"Twitch · {recording.channel} · {number}{self.extension}",
-            "extension": self.extension,
-            "clip_seconds": recording.clip_seconds,
-            "ad": recording.ad,
-            "has_webcam": recording.has_webcam,
-        })
+        if not recording.archive_directory:
+            atomic_json(self.manifest, {
+                "source_id": self.id,
+                "recording_id": recording.id,
+                "name": f"Twitch · {recording.channel} · {number}{self.extension}",
+                "extension": self.extension,
+                "clip_seconds": recording.clip_seconds,
+                "ad": recording.ad,
+                "has_webcam": recording.has_webcam,
+            })
         self.output = av.open(str(self.partial), mode="w",
                               format="mpegts" if transport_stream else "matroska",
                               options={"avoid_negative_ts": "make_zero"})
@@ -98,9 +104,9 @@ def capture_packets(source, recording):
         for packet in source.demux(streams):
             now = time.monotonic()
             if now >= next_disk_check:
-                check_space()
+                check_space(recording.archive_directory)
                 next_disk_check = now + DISK_CHECK_SECONDS
-                if segment is not None and segment.partial.stat().st_size >= MAX_BYTES:
+                if not recording.archive_directory and segment is not None and segment.partial.stat().st_size >= MAX_BYTES:
                     raise MediaError("Запись остановлена: сегмент достиг лимита размера файла.")
             if packet.dts is None or not packet.size or packet.is_corrupt:
                 continue
@@ -113,7 +119,7 @@ def capture_packets(source, recording):
                     previous.close()
                     recording.finished_seconds += previous.duration
                     recording.segment_seconds = 0
-                check_space()
+                check_space(recording.archive_directory)
                 segment = Segment(recording, streams, timestamp, decode_timestamp, transport_stream)
                 if not recording.stop.is_set():
                     recording.status = "recording"
@@ -128,13 +134,14 @@ def capture_packets(source, recording):
 
 
 class Recording:
-    def __init__(self, channel, minutes, clip_seconds, ad, *, has_webcam=False):
+    def __init__(self, channel, minutes, clip_seconds, ad, *, has_webcam=False, archive_directory=None):
         self.id = str(uuid4())
         self.channel = channel
         self.minutes = minutes
         self.clip_seconds = clip_seconds
         self.ad = ad
         self.has_webcam = has_webcam
+        self.archive_directory = Path(archive_directory) if archive_directory else None
         self.status = "connecting"
         self.active_minutes = None
         self.segment = 0
@@ -161,6 +168,7 @@ class Recording:
             "active_minutes": self.active_minutes, "next_minutes": self.minutes,
             "segment_seconds": round(self.segment_seconds),
             "elapsed_seconds": round(self.finished_seconds + self.segment_seconds), "error": self.error,
+            "directory": str(self.archive_directory) if self.archive_directory else None,
         }
 
     def run(self):
@@ -168,7 +176,7 @@ class Recording:
         failures = 0
         try:
             while not self.stop.is_set():
-                check_space()
+                check_space(self.archive_directory)
                 before = self.finished_seconds
                 with self.process_lock:
                     if self.stop.is_set():
@@ -201,7 +209,7 @@ class Recording:
                 if self.stop.is_set():
                     break
                 failures = 0 if self.finished_seconds > before else failures + 1
-                if failures >= 6:
+                if failures >= 6 and not self.archive_directory:
                     self.status = "finished" if self.segment else "failed"
                     if not self.segment:
                         self.error = "Трансляция недоступна после шести попыток подключения."

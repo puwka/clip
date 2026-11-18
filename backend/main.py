@@ -46,6 +46,8 @@ async def lifespan(app):
     app.state.db = Database()
     app.state.recording = None
     app.state.recording_task = None
+    app.state.archive_recording = None
+    app.state.archive_task = None
     app.state.twitch_error = None
     stop = asyncio.Event()
     workers = []
@@ -63,6 +65,9 @@ async def lifespan(app):
         if app.state.recording_task and not app.state.recording_task.done():
             app.state.recording.stop_capture()
             await app.state.recording_task
+        if app.state.archive_task and not app.state.archive_task.done():
+            app.state.archive_recording.stop_capture()
+            await app.state.archive_task
         await asyncio.gather(*workers, *handoffs)
         await app.state.db.client.aclose()
 
